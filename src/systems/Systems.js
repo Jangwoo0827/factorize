@@ -177,27 +177,60 @@ export class ProductionStats {
 }
 
 /**
- * 전력망을 계산하는 정적 유틸리티.
- * 개별 건물이 아니라 여러 건물에 걸친 연결 관계(그래프)를 다뤄야 하므로
- * 특정 건물의 update()에 넣기보다 별도 로직으로 분리했다.
+ * 전력망을 계산한다. 개별 건물이 아니라 여러 건물에 걸친 연결 관계(그래프)를
+ * 다뤄야 하므로 특정 건물의 update()에 넣기보다 별도 로직으로 분리했다.
  *
  * 동작 방식: 발전기/전선/전력을 쓰는 건물들을 4방향 인접 그래프로 보고,
  * BFS로 서로 연결된 덩어리(전력망)를 찾은 뒤, 그 안의 총 공급량과
  * 총 수요량을 비교해 공급 비율(0~1)을 계산하고 각 건물에 반영한다.
+ *
+ * [성능] BFS로 그래프 위상(어떤 건물들이 하나의 망으로 묶이는지)을 다시 계산하는
+ * 것은 전력 건물이 배치/철거될 때만 실제로 바뀐다 - 업그레이드나 매 틱 흐르는
+ * 시간과는 무관하다. 그런데 예전엔 이 위상 계산을 매 틱(초당 60번) 다시 돌았는데,
+ * 건물이 수만 개로 늘어나면 이 BFS 자체가 프레임 예산을 넘어서는 압도적인 비용이
+ * 된다(20,164개 격자에서 실측 약 12ms/틱). 그래서 위상은 markDirty()가 호출된
+ * 뒤 딱 한 번만 다시 계산하고 캐시해두고, 매 틱은 캐시된 망 목록을 따라
+ * 공급/수요 합산 + 비율 반영만 다시 한다(순수 배열 순회라 BFS보다 훨씬 싸다).
  */
 export class PowerSystem {
+    constructor() {
+        /** @type {import('../entities/Building.js').Building[][]} 캐시된 전력망(연결된 건물 묶음) 목록 */
+        this.networks = [];
+        /** true면 다음 update()에서 위상을 다시 계산한다. */
+        this.isDirty = true;
+    }
+
+    /** 전력 건물이 배치/철거되어 그래프 위상이 바뀌었을 수 있음을 표시한다. */
+    markDirty() {
+        this.isDirty = true;
+    }
+
     /**
-     * 매 틱 호출되어 모든 전력망을 재계산한다.
+     * 매 틱 호출되어 전력망을 재계산한다.
      * @param {import('../world/World.js').World} world
      */
-    static update(world) {
+    update(world) {
+        if (this.isDirty) {
+            this.#rebuildNetworks(world);
+            this.isDirty = false;
+        }
+
+        for (const network of this.networks) {
+            PowerSystem.#applyNetwork(network);
+        }
+    }
+
+    /**
+     * 전력 건물 전체를 BFS로 훑어 서로 연결된 묶음(망) 목록을 다시 만든다.
+     * @param {import('../world/World.js').World} world
+     */
+    #rebuildNetworks(world) {
+        this.networks = [];
         const visited = new Set();
 
         for (const building of world.getAllBuildings()) {
             if (!building.isPowerNode() || visited.has(building)) continue;
-
-            const network = PowerSystem.#collectNetwork(world, building, visited);
-            PowerSystem.#applyNetwork(network);
+            this.networks.push(PowerSystem.#collectNetwork(world, building, visited));
         }
     }
 

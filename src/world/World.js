@@ -15,7 +15,7 @@
  */
 
 import { CONFIG } from '../../config.js';
-import { AchievementSystem, Economy, ProductionStats, ResearchSystem } from '../systems/Systems.js';
+import { AchievementSystem, Economy, PowerSystem, ProductionStats, ResearchSystem } from '../systems/Systems.js';
 import { deserializeBuilding } from '../entities/Building.js';
 
 /** 타일 종류. Phase 1에서는 GROUND만 존재하며, 이후 자원 타일이 추가된다. */
@@ -89,6 +89,14 @@ export class World {
          */
         this.buildings = new Set();
 
+        /**
+         * typeId별 배치된 건물 개수. ObjectivePanel처럼 "이 종류가 하나라도
+         * 있는가"를 매 프레임 확인하는 곳에서, 건물 수만큼 스캔하는 대신
+         * O(1)로 답할 수 있게 하기 위한 캐시 (placeBuilding/removeBuilding이 갱신).
+         * @type {Map<string, number>}
+         */
+        this.buildingCountsByType = new Map();
+
         /** 전역 자금 상태. 특정 건물에 속하지 않으므로 World가 소유한다. */
         this.economy = new Economy(CONFIG.ECONOMY.STARTING_MONEY);
 
@@ -104,6 +112,13 @@ export class World {
 
         /** 업적 달성 상태. CONFIG.ACHIEVEMENTS를 기준으로 매 틱 확인된다. */
         this.achievements = new AchievementSystem();
+
+        /**
+         * 전력망 계산. 그래프 위상은 placeBuilding()/removeBuilding()이 전력
+         * 건물을 배치/철거할 때만 markDirty()로 무효화되고, 나머지 틱은
+         * 캐시된 위상으로 공급/수요만 다시 합산한다 (성능 최적화).
+         */
+        this.powerSystem = new PowerSystem();
     }
 
     #chunkKey(chunkX, chunkY) {
@@ -161,6 +176,8 @@ export class World {
         }
         tile.building = building;
         this.buildings.add(building);
+        this.buildingCountsByType.set(building.typeId, (this.buildingCountsByType.get(building.typeId) ?? 0) + 1);
+        if (building.isPowerNode()) this.powerSystem.markDirty();
         return true;
     }
 
@@ -176,8 +193,25 @@ export class World {
             return false;
         }
         this.buildings.delete(tile.building);
+        const remaining = (this.buildingCountsByType.get(tile.building.typeId) ?? 1) - 1;
+        if (remaining > 0) {
+            this.buildingCountsByType.set(tile.building.typeId, remaining);
+        } else {
+            this.buildingCountsByType.delete(tile.building.typeId);
+        }
+        if (tile.building.isPowerNode()) this.powerSystem.markDirty();
         tile.building = null;
         return true;
+    }
+
+    /**
+     * 이 typeId의 건물이 하나라도 배치되어 있는지 O(1)로 확인한다.
+     * (건물 수만큼 스캔하는 배열 검색 대신 buildingCountsByType 캐시를 쓴다.)
+     * @param {string} typeId
+     * @returns {boolean}
+     */
+    hasBuildingType(typeId) {
+        return (this.buildingCountsByType.get(typeId) ?? 0) > 0;
     }
 
     /**
@@ -237,6 +271,7 @@ export class World {
         // getTile()이 다시 생성해주므로 안전하게 버려도 된다.
         this.chunks.clear();
         this.buildings.clear();
+        this.buildingCountsByType.clear();
 
         for (const buildingData of data.buildings ?? []) {
             const building = deserializeBuilding(buildingData);

@@ -20,7 +20,6 @@ import { World } from '../world/World.js';
 import { MinimapRenderer, Renderer } from '../rendering/Renderer.js';
 import { Assembler, createBuilding, Direction, Miner, Storage } from '../entities/Building.js';
 import { UIManager, BULLDOZE_TOOL_ID, BLUEPRINT_TOOL_ID, MULTI_SELECT_TOOL_ID } from '../ui/UIManager.js';
-import { PowerSystem } from '../systems/Systems.js';
 import { SaveManager } from '../save/SaveManager.js';
 import { Logger } from '../utils/Utils.js';
 import { ResourceRegistry } from '../resources/Resources.js';
@@ -47,6 +46,15 @@ export class Game {
         this.uiManager = new UIManager();
         this.saveManager = new SaveManager(this.world, this.camera);
         this.autoSaveTimer = 0;
+
+        // 미니맵 다시 그리기 / 창고 총량 재계산은 매 프레임 필요한 정밀도가
+        // 아니므로(둘 다 배치된 모든 건물을 훑는 O(건물 수) 작업), 초당 몇 번만
+        // 갱신한다 - 건물이 수만 개로 늘어나면 이걸 매 프레임 하는 비용이
+        // 프레임 예산을 넘어서기 때문 (성능 최적화).
+        this.slowUiTimer = 0;
+        this.cachedStoredCount = 0;
+        // 시작 직후 첫 프레임에도 미니맵이 바로 그려지도록 true로 시작한다.
+        this.shouldRedrawMinimap = true;
 
         // 미니맵 클릭 = 그 위치로 카메라 이동. 드래그로 오인하지 않도록 클릭
         // 좌표는 canvas 자신의 bounding rect 기준으로 계산한다.
@@ -509,7 +517,7 @@ export class Game {
 
         // 건물들이 이번 틱의 powerRatio를 참고해 동작해야 하므로, 개별
         // 건물 업데이트보다 먼저 전력망을 계산한다.
-        PowerSystem.update(this.world);
+        this.world.powerSystem.update(this.world);
 
         for (const building of this.world.getAllBuildings()) {
             building.update(dt, this.world);
@@ -518,6 +526,22 @@ export class Game {
         this.world.stats.update(dt);
         this.#checkAchievements();
         this.#updateAutoSave(dt);
+        this.#updateSlowUi(dt);
+    }
+
+    /**
+     * 미니맵/창고 총량처럼 배치된 모든 건물을 훑어야 하는 UI 갱신을 초당
+     * 몇 번으로 제한한다 (매 프레임 할 필요가 없는 정밀도인데, 건물이
+     * 수만 개면 매 프레임 하기엔 비용이 너무 크다).
+     * @param {number} dt
+     */
+    #updateSlowUi(dt) {
+        this.slowUiTimer += dt;
+        if (this.slowUiTimer < 0.2) return; // 5Hz - 미니맵의 카메라 사각형이 밀리는 느낌 없이도 충분히 절약된다
+        this.slowUiTimer = 0;
+
+        this.cachedStoredCount = this.#getTotalStoredCount();
+        this.shouldRedrawMinimap = true;
     }
 
     /** 새로 달성한 업적이 있으면 미니로그에 알린다. */
@@ -559,7 +583,12 @@ export class Game {
         this.buildMenuPanel.updateAffordability(this.world.economy);
         this.productionGraphPanel.update(this.world.stats);
         this.progressPanel.update(this.world);
-        this.minimapRenderer.render(this.world, this.camera);
+
+        if (this.shouldRedrawMinimap) {
+            this.shouldRedrawMinimap = false;
+            this.minimapRenderer.render(this.world, this.camera);
+        }
+
         this.#updateStatusBar();
     }
 
@@ -650,7 +679,7 @@ export class Game {
         }
 
         if (ore) {
-            ore.textContent = `${this.#getTotalStoredCount()}`;
+            ore.textContent = `${this.cachedStoredCount}`;
         }
 
         if (money) {

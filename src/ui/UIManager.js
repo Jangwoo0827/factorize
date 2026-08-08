@@ -1054,9 +1054,9 @@ export class ObjectivePanel {
 
     /** @param {import('../world/World.js').World} world */
     update(world) {
-        const buildings = [...world.getAllBuildings()];
-        const has = (typeId) => buildings.some((building) => building.typeId === typeId);
-        const seller = buildings.find((building) => building.typeId === 'seller');
+        // 건물 수만큼 스캔하는 배열 검색 대신, World가 유지하는 O(1) 카운트 캐시를 쓴다
+        // (건물이 수만 개로 늘어나면 매 프레임 배열 스캔은 감당하기 힘든 비용이 된다).
+        const has = (typeId) => world.hasBuildingType(typeId);
 
         if (!has('miner')) {
             this.textEl.textContent = '좌측 "건설" 버튼을 열어 채굴기를 설치하세요';
@@ -1064,7 +1064,7 @@ export class ObjectivePanel {
             this.textEl.textContent = '컨베이어로 채굴기를 연결하세요';
         } else if (!has('seller')) {
             this.textEl.textContent = '판매기를 연결해 첫 수익을 만드세요';
-        } else if ((seller?.totalSold ?? 0) === 0) {
+        } else if (world.stats.totalSold === 0) {
             this.textEl.textContent = '광석이 판매기에 도착하도록 방향을 확인하세요';
         } else if (!has('generator')) {
             this.textEl.textContent = '발전기와 전선으로 전력망을 만드세요';
