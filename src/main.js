@@ -95,15 +95,16 @@ function bootstrap() {
     }
 
     /**
-     * Game을 실제로 만들고 시작한다. slotId가 있으면 그 저장을 불러온 뒤 시작한다.
+     * Game을 실제로 만들고 시작한다. slotId가 있으면 그 저장을 불러온 뒤 시작한다
+     * (첫 렌더부터 불러온 내용이 보이도록, 불러오기가 끝날 때까지 기다린 뒤 start()한다).
      * @param {string | null} slotId
      */
-    function startGame(slotId) {
+    async function startGame(slotId) {
         try {
             const game = new Game(canvas, statElements, uiElements);
 
             if (slotId) {
-                game.saveManager.loadFromSlot(slotId);
+                await game.saveManager.loadFromSlot(slotId);
                 game.activeSlotId = slotId;
             }
 
@@ -139,8 +140,8 @@ function bootstrap() {
             launcherOverlay.classList.add('is-hidden');
             startGame(null);
         },
-        onDeleteSlot: (slotId) => {
-            SaveManager.deleteSlot(slotId);
+        onDeleteSlot: async (slotId) => {
+            await SaveManager.deleteSlot(slotId);
             uiManager.saveSlotPicker.render('이어할 게임을 고르세요', SaveManager.listSlots());
         },
     });

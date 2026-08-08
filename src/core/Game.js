@@ -129,8 +129,8 @@ export class Game {
         this.loadPanelEl = uiElements.loadPanel;
         this.saveSlotPicker = this.uiManager.initSaveSlotPicker(uiElements.loadPanel, {
             onSelectSlot: (slotId) => this.#handleLoadSlot(slotId),
-            onDeleteSlot: (slotId) => {
-                SaveManager.deleteSlot(slotId);
+            onDeleteSlot: async (slotId) => {
+                await SaveManager.deleteSlot(slotId);
                 this.saveSlotPicker.render('저장 불러오기', SaveManager.listSlots());
             },
         });
@@ -502,8 +502,8 @@ export class Game {
      * 덮어쓴다 - 아직 한 번도 저장한 적 없는 새 게임이면(null) 새 슬롯을 만들고,
      * 그 슬롯을 이후 저장도 계속 이어받도록 activeSlotId로 기억해둔다.
      */
-    #handleSaveRequest() {
-        const { success, slotId } = this.saveManager.saveToSlot(this.activeSlotId);
+    async #handleSaveRequest() {
+        const { success, slotId } = await this.saveManager.saveToSlot(this.activeSlotId);
         if (success) this.activeSlotId = slotId;
 
         const timeLabel = new Date().toLocaleTimeString();
@@ -515,13 +515,13 @@ export class Game {
      * 만든다 - 지금 이어가던 슬롯은 그대로 남고, 이후 저장은 새로 만든 슬롯을
      * 이어받는다 (지금 지점에서 갈라져 나온 두 번째 저장을 만드는 셈).
      */
-    #handleSaveAsRequest() {
+    async #handleSaveAsRequest() {
         const defaultLabel = `저장 ${new Date().toLocaleString('ko-KR')}`;
         const input = window.prompt('저장할 이름을 입력하세요', defaultLabel);
         if (input === null) return; // 취소
 
         const label = input.trim() || defaultLabel;
-        const { success, slotId } = this.saveManager.saveToSlot(null, label);
+        const { success, slotId } = await this.saveManager.saveToSlot(null, label);
         if (success) this.activeSlotId = slotId;
 
         const timeLabel = new Date().toLocaleTimeString();
@@ -543,8 +543,8 @@ export class Game {
      * 다시 만들고, 이전에 확인 중이던 건물/선택 상태도 초기화한다.
      * @param {string} slotId
      */
-    #handleLoadSlot(slotId) {
-        const success = this.saveManager.loadFromSlot(slotId);
+    async #handleLoadSlot(slotId) {
+        const success = await this.saveManager.loadFromSlot(slotId);
         const timeLabel = new Date().toLocaleTimeString();
         this.savePanel.setStatus(success ? `불러옴 (${timeLabel})` : '불러오기 실패');
 
@@ -609,12 +609,12 @@ export class Game {
      * 슬롯(activeSlotId)에 덮어쓴다 - 아직 한 번도 저장한 적 없으면 새 슬롯을 만든다.
      * @param {number} dt
      */
-    #updateAutoSave(dt) {
+    async #updateAutoSave(dt) {
         this.autoSaveTimer += dt;
         if (this.autoSaveTimer < CONFIG.SAVE.AUTO_SAVE_INTERVAL) return;
 
         this.autoSaveTimer = 0;
-        const { success, slotId } = this.saveManager.saveToSlot(this.activeSlotId);
+        const { success, slotId } = await this.saveManager.saveToSlot(this.activeSlotId);
         if (success) this.activeSlotId = slotId;
 
         const timeLabel = new Date().toLocaleTimeString();
