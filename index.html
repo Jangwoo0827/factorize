@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>FACTORIZE</title>
+    <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+    <canvas id="game-canvas"></canvas>
+
+    <!-- 좌상단 브랜드 로고 (Canvas가 아닌 DOM으로 처리) -->
+    <div id="brand" class="brand">FACTORIZE</div>
+
+    <!-- 우상단 저장/불러오기 패널 -->
+    <div id="save-panel" class="panel panel--save"></div>
+
+    <button id="recipe-toggle" class="recipe-toggle" type="button">제작 레시피</button>
+    <div id="recipe-panel" class="panel panel--recipes"></div>
+
+    <button id="graph-toggle" class="recipe-toggle graph-toggle" type="button">생산 그래프</button>
+    <div id="graph-panel" class="panel panel--graph"></div>
+
+    <button id="settings-toggle" class="recipe-toggle settings-toggle" type="button">설정</button>
+    <div id="settings-panel" class="panel panel--settings"></div>
+
+    <button id="progress-toggle" class="recipe-toggle progress-toggle" type="button">달성 현황</button>
+    <div id="progress-panel" class="panel panel--progress"></div>
+
+    <!-- 좌측 건물 선택 패널: 평소엔 접혀 있고, build-menu-toggle을 누르면 슬라이드로 펼쳐진다 -->
+    <button id="build-menu-toggle" class="build-menu-toggle" type="button">건설</button>
+    <div id="build-menu" class="panel panel--left"></div>
+
+    <!-- 상단 연구 바 (RP 표시 + 연구 가능한 기술 버튼, config.js의 TECH_TREE 기반) -->
+    <div id="research-bar" class="panel panel--top"></div>
+
+    <!-- 초반 진행을 위한 다음 목표 안내 -->
+    <div id="objective-panel" class="panel panel--objective"></div>
+
+    <!-- 우측 정보 패널 (건설 도구 없이 건물을 클릭하면 표시됨) -->
+    <div id="inspector-panel" class="panel panel--right"></div>
+
+    <!-- 하단 미니로그 (배치/철거/연구 완료 등 최근 이벤트) -->
+    <div id="mini-log" class="panel panel--minilog"></div>
+
+    <!-- 하단 상태 바: FPS/줌/좌표/자원/자금 -->
+    <div id="status-bar" class="panel panel--bottom">
+        <div class="stat">
+            <span class="stat-label">FPS</span>
+            <span id="stat-fps" class="stat-value">--</span>
+        </div>
+        <div class="stat">
+            <span class="stat-label">ZOOM</span>
+            <span id="stat-zoom" class="stat-value">100%</span>
+        </div>
+        <div class="stat">
+            <span class="stat-label">TILE</span>
+            <span id="stat-tile" class="stat-value">0, 0</span>
+        </div>
+        <div class="stat">
+            <span class="stat-label">ORE</span>
+            <span id="stat-ore" class="stat-value">0</span>
+        </div>
+        <div class="stat">
+            <span class="stat-label">$</span>
+            <span id="stat-money" class="stat-value">0</span>
+        </div>
+        <div class="stat">
+            <span class="stat-label">생산</span>
+            <span id="stat-prod-rate" class="stat-value">0/s</span>
+        </div>
+        <div class="stat">
+            <span class="stat-label">수익</span>
+            <span id="stat-income-rate" class="stat-value">+0/s</span>
+        </div>
+    </div>
+
+    <!-- 치명적 오류 발생 시 노출되는 오버레이 -->
+    <div id="fatal-error" class="fatal-error"></div>
+
+    <script type="module" src="src/main.js"></script>
+</body>
+</html>

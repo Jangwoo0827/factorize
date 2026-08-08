@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "factorize-dev",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["dev_server.py", "8431"],
+      "port": 8431
+    }
+  ]
+}
