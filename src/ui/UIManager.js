@@ -14,6 +14,7 @@
 import { CONFIG } from '../../config.js';
 import { Logger } from '../utils/Utils.js';
 import { ResourceRegistry } from '../resources/Resources.js';
+import { Miner } from '../entities/Building.js';
 
 /** 해체(철거) 도구를 선택했을 때 사용하는 특수 ID. CONFIG.BUILDINGS의 키와 겹치지 않는다. */
 export const BULLDOZE_TOOL_ID = 'bulldoze';
@@ -364,8 +365,10 @@ export class InspectorPanel {
      * @param {import('../entities/Building.js').Building | import('../entities/Building.js').Building[] | null} building
      * @param {import('../systems/Systems.js').Economy} economy 업그레이드 비용 지불 가능 여부 확인에 사용
      * @param {(building: import('../entities/Building.js').Building | import('../entities/Building.js').Building[]) => void} onUpgradeClick
+     * @param {(miners: import('../entities/Building.js').Miner[], resourceType: string) => void} [onResourceChange]
+     *        다중 선택 중 채굴기가 포함되어 있을 때, 채굴 자원 버튼을 누르면 호출된다.
      */
-    update(building, economy, onUpgradeClick) {
+    update(building, economy, onUpgradeClick, onResourceChange) {
         if (!building) {
             this.#renderEmpty();
             this.upgradeButtonEl.style.display = 'none';
@@ -373,7 +376,7 @@ export class InspectorPanel {
         }
 
         if (Array.isArray(building)) {
-            this.#renderMultiSelection(building, economy, onUpgradeClick);
+            this.#renderMultiSelection(building, economy, onUpgradeClick, onResourceChange);
             return;
         }
 
@@ -433,8 +436,9 @@ export class InspectorPanel {
      * @param {import('../entities/Building.js').Building[]} buildings
      * @param {import('../systems/Systems.js').Economy} economy
      * @param {(buildings: import('../entities/Building.js').Building[]) => void} onUpgradeClick
+     * @param {(miners: import('../entities/Building.js').Miner[], resourceType: string) => void} [onResourceChange]
      */
-    #renderMultiSelection(buildings, economy, onUpgradeClick) {
+    #renderMultiSelection(buildings, economy, onUpgradeClick, onResourceChange) {
         const countsByType = new Map();
         for (const b of buildings) {
             countsByType.set(b.typeId, (countsByType.get(b.typeId) ?? 0) + 1);
@@ -473,6 +477,11 @@ export class InspectorPanel {
             this.bodyEl.appendChild(rowEl);
         }
 
+        const miners = buildings.filter((b) => b instanceof Miner);
+        if (miners.length > 0 && onResourceChange) {
+            this.bodyEl.appendChild(this.#createMinerResourceSection(miners, onResourceChange));
+        }
+
         const upgradable = buildings.filter((b) => b.canUpgrade());
         if (upgradable.length === 0) {
             this.upgradeButtonEl.style.display = 'none';
@@ -488,6 +497,48 @@ export class InspectorPanel {
         this.upgradeButtonEl.disabled = false;
         this.upgradeButtonEl.classList.toggle('is-affordable', affordable);
         this.upgradeButtonEl.onclick = () => onUpgradeClick(buildings);
+    }
+
+    /**
+     * 다중 선택 안에 채굴기가 있을 때, 선택된 채굴기 전부가 캘 수 있는
+     * 자원(등급이 섞여 있으면 그 교집합 - 하위 등급이 캘 수 있는 자원은
+     * 상위 등급도 항상 캘 수 있으므로, 교집합은 곧 가장 낮은 등급의 목록과 같다)을
+     * 버튼으로 늘어놓는다. 버튼을 누르면 선택된 채굴기 전부가 그 자원으로 즉시 바뀐다.
+     * @param {import('../entities/Building.js').Miner[]} miners
+     * @param {(miners: import('../entities/Building.js').Miner[], resourceType: string) => void} onResourceChange
+     * @returns {HTMLElement}
+     */
+    #createMinerResourceSection(miners, onResourceChange) {
+        const sectionEl = document.createElement('div');
+        sectionEl.className = 'multi-resource-section';
+
+        const labelEl = document.createElement('div');
+        labelEl.className = 'multi-resource-label';
+        labelEl.textContent = `채굴 자원 일괄 변경 (채굴기 ${miners.length}개)`;
+        sectionEl.appendChild(labelEl);
+
+        const sharedResources = miners.reduce((intersection, miner) => {
+            const list = miner.definition.selectableResources ?? [miner.definition.producesResource];
+            return intersection.filter((resourceType) => list.includes(resourceType));
+        }, miners[0].definition.selectableResources ?? [miners[0].definition.producesResource]);
+
+        const buttonsEl = document.createElement('div');
+        buttonsEl.className = 'multi-resource-buttons';
+        for (const resourceType of sharedResources) {
+            const def = ResourceRegistry.getDefinition(resourceType);
+
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'multi-resource-btn';
+            btn.style.setProperty('--accent-color', def?.color ?? CONFIG.RENDER.ACCENT_CYAN);
+            btn.textContent = def?.label ?? resourceType;
+            btn.addEventListener('click', () => onResourceChange(miners, resourceType));
+
+            buttonsEl.appendChild(btn);
+        }
+        sectionEl.appendChild(buttonsEl);
+
+        return sectionEl;
     }
 }
 

@@ -733,6 +733,19 @@ export class Miner extends Building {
         const index = resources.indexOf(this.selectedResource);
         this.selectedResource = resources[(index + 1) % resources.length];
     }
+
+    /**
+     * 이 채굴기가 캘 수 있는 자원이면 바로 그 자원으로 바꾼다 (다중 선택 일괄
+     * 변경용 - cycleResource()처럼 한 칸씩 넘기지 않고 원하는 자원으로 직행한다).
+     * @param {string} resourceType
+     * @returns {boolean} 이 채굴기가 그 자원을 캘 수 있어서 실제로 바뀌었는지 여부
+     */
+    setResource(resourceType) {
+        const resources = this.definition.selectableResources ?? [this.definition.producesResource];
+        if (!resources.includes(resourceType)) return false;
+        this.selectedResource = resourceType;
+        return true;
+    }
 }
 
 export class MinerT1 extends Miner { constructor(x, y, r) { super(x, y, 'miner', r); } }

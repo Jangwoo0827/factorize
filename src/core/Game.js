@@ -23,6 +23,7 @@ import { UIManager, BULLDOZE_TOOL_ID, BLUEPRINT_TOOL_ID, MULTI_SELECT_TOOL_ID } 
 import { PowerSystem } from '../systems/Systems.js';
 import { SaveManager } from '../save/SaveManager.js';
 import { Logger } from '../utils/Utils.js';
+import { ResourceRegistry } from '../resources/Resources.js';
 
 export class Game {
     /** window resize 리스너에 등록/해제할 #handleResize의 바인딩된 참조 */
@@ -456,6 +457,23 @@ export class Game {
         Logger.info(`일괄 업그레이드: ${upgraded}/${buildings.length}개 성공`);
     }
 
+    /**
+     * 다중 선택 패널의 "채굴 자원 일괄 변경" 버튼을 눌렀을 때 처리한다.
+     * 버튼은 선택된 채굴기 전부가 캘 수 있는 자원만 보여주므로 실패할 일은
+     * 거의 없지만, 방어적으로 setResource()의 성공 여부를 세어 로그에 남긴다.
+     * @param {import('../entities/Building.js').Miner[]} miners
+     * @param {string} resourceType
+     */
+    #handleResourceChangeClick(miners, resourceType) {
+        let changed = 0;
+        for (const miner of miners) {
+            if (miner.setResource(resourceType)) changed += 1;
+        }
+
+        const label = ResourceRegistry.getDefinition(resourceType)?.label ?? resourceType;
+        Logger.info(`채굴 자원 일괄 변경: 채굴기 ${changed}개 → ${label}`);
+    }
+
     /** 저장 버튼 클릭 또는 Ctrl+S 입력을 처리한다. */
     #handleSaveRequest() {
         const success = this.saveManager.save();
@@ -536,6 +554,7 @@ export class Game {
             this.selectedBuildings.length > 0 ? this.selectedBuildings : this.inspectedBuilding,
             this.world.economy,
             (selection) => this.#handleUpgradeClick(selection),
+            (miners, resourceType) => this.#handleResourceChangeClick(miners, resourceType),
         );
         this.buildMenuPanel.updateAffordability(this.world.economy);
         this.productionGraphPanel.update(this.world.stats);
