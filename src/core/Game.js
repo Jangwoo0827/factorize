@@ -47,6 +47,12 @@ export class Game {
         this.saveManager = new SaveManager(this.world, this.camera);
         this.autoSaveTimer = 0;
 
+        // 지금 이어가는 저장 슬롯 id. null이면 아직 어느 슬롯에도 저장한 적
+        // 없는 새 게임이라, 다음 "저장"이 새 슬롯을 만든다. main.js가 시작
+        // 화면에서 슬롯을 골랐다면 여기에 그 id를 직접 대입한다.
+        this.activeSlotId = null;
+        this.loadPanelOpen = false;
+
         // 미니맵 다시 그리기 / 창고 총량 재계산은 매 프레임 필요한 정밀도가
         // 아니므로(둘 다 배치된 모든 건물을 훑는 O(건물 수) 작업), 초당 몇 번만
         // 갱신한다 - 건물이 수만 개로 늘어나면 이걸 매 프레임 하는 비용이
@@ -69,7 +75,7 @@ export class Game {
             onSecondaryAction: (tileX, tileY) => this.#handleSecondaryAction(tileX, tileY),
             onKeyPress: (code) => this.#handleKeyPress(code),
             onSaveRequest: () => this.#handleSaveRequest(),
-            onLoadRequest: () => this.#handleLoadRequest(),
+            onLoadRequest: () => this.#handleToggleLoadPanel(),
             onSelectionStart: (tile) => this.#handleSelectionStart(tile),
             onSelectionEnd: () => this.#handleSelectionEnd(),
             onSelectionCancel: () => this.#handleSelectionCancel(),
@@ -117,8 +123,17 @@ export class Game {
         this.savePanel = this.uiManager.initSavePanel(
             uiElements.savePanel,
             () => this.#handleSaveRequest(),
-            () => this.#handleLoadRequest(),
+            () => this.#handleSaveAsRequest(),
+            () => this.#handleToggleLoadPanel(),
         );
+        this.loadPanelEl = uiElements.loadPanel;
+        this.saveSlotPicker = this.uiManager.initSaveSlotPicker(uiElements.loadPanel, {
+            onSelectSlot: (slotId) => this.#handleLoadSlot(slotId),
+            onDeleteSlot: (slotId) => {
+                SaveManager.deleteSlot(slotId);
+                this.saveSlotPicker.render('저장 불러오기', SaveManager.listSlots());
+            },
+        });
         this.recipePanel = this.uiManager.initRecipePanel(uiElements.recipeToggle, uiElements.recipePanel);
         this.productionGraphPanel = this.uiManager.initProductionGraphPanel(uiElements.graphToggle, uiElements.graphPanel);
         this.settingsPanel = this.uiManager.initSettingsPanel(uiElements.settingsToggle, uiElements.settingsPanel);
@@ -482,28 +497,65 @@ export class Game {
         Logger.info(`채굴 자원 일괄 변경: 채굴기 ${changed}개 → ${label}`);
     }
 
-    /** 저장 버튼 클릭 또는 Ctrl+S 입력을 처리한다. */
+    /**
+     * 저장 버튼 클릭 또는 Ctrl+S 입력을 처리한다. 지금 이어가는 슬롯(activeSlotId)에
+     * 덮어쓴다 - 아직 한 번도 저장한 적 없는 새 게임이면(null) 새 슬롯을 만들고,
+     * 그 슬롯을 이후 저장도 계속 이어받도록 activeSlotId로 기억해둔다.
+     */
     #handleSaveRequest() {
-        const success = this.saveManager.save();
+        const { success, slotId } = this.saveManager.saveToSlot(this.activeSlotId);
+        if (success) this.activeSlotId = slotId;
+
         const timeLabel = new Date().toLocaleTimeString();
         this.savePanel.setStatus(success ? `저장됨 (${timeLabel})` : '저장 실패');
     }
 
     /**
-     * 불러오기 버튼 클릭 또는 Ctrl+L 입력을 처리한다.
+     * "다른 이름으로" 버튼을 눌렀을 때 처리한다. 이름을 물어보고 항상 새 슬롯을
+     * 만든다 - 지금 이어가던 슬롯은 그대로 남고, 이후 저장은 새로 만든 슬롯을
+     * 이어받는다 (지금 지점에서 갈라져 나온 두 번째 저장을 만드는 셈).
+     */
+    #handleSaveAsRequest() {
+        const defaultLabel = `저장 ${new Date().toLocaleString('ko-KR')}`;
+        const input = window.prompt('저장할 이름을 입력하세요', defaultLabel);
+        if (input === null) return; // 취소
+
+        const label = input.trim() || defaultLabel;
+        const { success, slotId } = this.saveManager.saveToSlot(null, label);
+        if (success) this.activeSlotId = slotId;
+
+        const timeLabel = new Date().toLocaleTimeString();
+        this.savePanel.setStatus(success ? `'${label}'에 저장됨 (${timeLabel})` : '저장 실패');
+    }
+
+    /** 불러오기 버튼 클릭 또는 Ctrl+L 입력을 처리한다: 저장 슬롯 목록 패널을 여닫는다. */
+    #handleToggleLoadPanel() {
+        this.loadPanelOpen = !this.loadPanelOpen;
+        this.loadPanelEl.classList.toggle('is-open', this.loadPanelOpen);
+        if (this.loadPanelOpen) {
+            this.saveSlotPicker.render('저장 불러오기', SaveManager.listSlots());
+        }
+    }
+
+    /**
+     * 슬롯 목록에서 슬롯 하나를 골랐을 때 처리한다.
      * 성공하면 연구 상태가 완전히 바뀌었을 수 있으므로 건물 패널을 처음부터
      * 다시 만들고, 이전에 확인 중이던 건물/선택 상태도 초기화한다.
+     * @param {string} slotId
      */
-    #handleLoadRequest() {
-        const success = this.saveManager.load();
+    #handleLoadSlot(slotId) {
+        const success = this.saveManager.loadFromSlot(slotId);
         const timeLabel = new Date().toLocaleTimeString();
-        this.savePanel.setStatus(success ? `불러옴 (${timeLabel})` : '불러올 데이터 없음');
+        this.savePanel.setStatus(success ? `불러옴 (${timeLabel})` : '불러오기 실패');
 
         if (success) {
+            this.activeSlotId = slotId;
             this.buildMenuPanel.rebuild();
             this.inspectedBuilding = null;
             this.selectedBuildings = [];
             this.pendingRotation = Direction.RIGHT;
+            this.loadPanelOpen = false;
+            this.loadPanelEl.classList.remove('is-open');
         }
     }
 
@@ -553,7 +605,8 @@ export class Game {
     }
 
     /**
-     * 일정 주기마다 자동으로 저장한다.
+     * 일정 주기마다 자동으로 저장한다. 수동 저장과 마찬가지로 지금 이어가는
+     * 슬롯(activeSlotId)에 덮어쓴다 - 아직 한 번도 저장한 적 없으면 새 슬롯을 만든다.
      * @param {number} dt
      */
     #updateAutoSave(dt) {
@@ -561,7 +614,9 @@ export class Game {
         if (this.autoSaveTimer < CONFIG.SAVE.AUTO_SAVE_INTERVAL) return;
 
         this.autoSaveTimer = 0;
-        const success = this.saveManager.save();
+        const { success, slotId } = this.saveManager.saveToSlot(this.activeSlotId);
+        if (success) this.activeSlotId = slotId;
+
         const timeLabel = new Date().toLocaleTimeString();
         this.savePanel.setStatus(success ? `자동 저장됨 (${timeLabel})` : '자동 저장 실패');
     }

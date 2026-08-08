@@ -580,17 +580,20 @@ export class MiniLog {
 }
 
 /**
- * 저장/불러오기 버튼과 마지막 상태 텍스트를 보여주는 작은 패널.
+ * 저장/다른 이름으로 저장/불러오기 버튼과 마지막 상태 텍스트를 보여주는 작은 패널.
  * 실제 저장/불러오기 로직은 SaveManager가 담당하고, 이 클래스는
  * 버튼 클릭을 콜백으로 전달하고 결과 메시지만 표시한다.
+ * "저장"은 지금 이어가는 슬롯에 덮어쓰고, "다른 이름으로"는 새 슬롯을 만든다 -
+ * 슬롯을 나눠두면 Ctrl+S 한 번 잘못 눌러도 다른 슬롯의 진행 상황은 안전하다.
  */
 export class SavePanel {
     /**
      * @param {HTMLElement} containerEl
      * @param {() => void} onSaveClick
+     * @param {() => void} onSaveAsClick
      * @param {() => void} onLoadClick
      */
-    constructor(containerEl, onSaveClick, onLoadClick) {
+    constructor(containerEl, onSaveClick, onSaveAsClick, onLoadClick) {
         this.containerEl = containerEl;
 
         const saveButton = document.createElement('button');
@@ -599,6 +602,12 @@ export class SavePanel {
         saveButton.textContent = '저장';
         saveButton.title = 'Ctrl+S';
         saveButton.addEventListener('click', onSaveClick);
+
+        const saveAsButton = document.createElement('button');
+        saveAsButton.type = 'button';
+        saveAsButton.className = 'save-btn';
+        saveAsButton.textContent = '다른 이름으로';
+        saveAsButton.addEventListener('click', onSaveAsClick);
 
         const loadButton = document.createElement('button');
         loadButton.type = 'button';
@@ -611,6 +620,7 @@ export class SavePanel {
         this.statusEl.className = 'save-status';
 
         this.containerEl.appendChild(saveButton);
+        this.containerEl.appendChild(saveAsButton);
         this.containerEl.appendChild(loadButton);
         this.containerEl.appendChild(this.statusEl);
     }
@@ -620,6 +630,108 @@ export class SavePanel {
      */
     setStatus(message) {
         this.statusEl.textContent = message;
+    }
+}
+
+/**
+ * 저장 슬롯 목록을 보여주고 고르게 하는 패널. 시작 화면(런처)과 게임 중
+ * "불러오기" 버튼 양쪽에서 재사용한다 - 슬롯을 나열하는 방식 자체는 두
+ * 상황에서 동일하고, 고른 다음 뭘 할지(새 Game을 만들지, 이미 떠 있는
+ * Game에 반영할지)만 호출부(Game.js/main.js)가 다르기 때문이다.
+ */
+export class SaveSlotPicker {
+    /**
+     * @param {HTMLElement} containerEl
+     * @param {{
+     *   onSelectSlot: (slotId: string) => void,
+     *   onNewGame?: () => void,
+     *   onDeleteSlot?: (slotId: string) => void,
+     * }} callbacks onNewGame이 있으면 "새 게임 시작" 버튼을, onDeleteSlot이 있으면
+     *   슬롯마다 삭제 버튼을 보여준다 (게임 중 불러오기 패널에는 필요 없어 생략 가능).
+     */
+    constructor(containerEl, callbacks) {
+        this.containerEl = containerEl;
+        this.callbacks = callbacks;
+
+        this.titleEl = document.createElement('div');
+        this.titleEl.className = 'slot-picker-title';
+
+        this.listEl = document.createElement('div');
+        this.listEl.className = 'slot-picker-list';
+
+        this.containerEl.appendChild(this.titleEl);
+        this.containerEl.appendChild(this.listEl);
+
+        if (callbacks.onNewGame) {
+            const newGameButtonEl = document.createElement('button');
+            newGameButtonEl.type = 'button';
+            newGameButtonEl.className = 'slot-picker-newgame-btn';
+            newGameButtonEl.textContent = '새 게임 시작';
+            newGameButtonEl.addEventListener('click', () => callbacks.onNewGame());
+            this.containerEl.appendChild(newGameButtonEl);
+        }
+    }
+
+    /**
+     * @param {string} title
+     * @param {{id: string, label: string, savedAt: number, buildingCount: number, money: number}[]} slots
+     */
+    render(title, slots) {
+        this.titleEl.textContent = title;
+        this.listEl.innerHTML = '';
+
+        if (slots.length === 0) {
+            const emptyEl = document.createElement('div');
+            emptyEl.className = 'slot-picker-empty';
+            emptyEl.textContent = '저장된 게임이 없습니다.';
+            this.listEl.appendChild(emptyEl);
+            return;
+        }
+
+        for (const slot of slots) {
+            this.listEl.appendChild(this.#createSlotRow(slot));
+        }
+    }
+
+    /**
+     * @param {{id: string, label: string, savedAt: number, buildingCount: number, money: number}} slot
+     */
+    #createSlotRow(slot) {
+        const rowEl = document.createElement('div');
+        rowEl.className = 'slot-row';
+
+        const infoEl = document.createElement('button');
+        infoEl.type = 'button';
+        infoEl.className = 'slot-row-info';
+        infoEl.addEventListener('click', () => this.callbacks.onSelectSlot(slot.id));
+
+        const labelEl = document.createElement('div');
+        labelEl.className = 'slot-row-label';
+        labelEl.textContent = slot.label;
+
+        const metaEl = document.createElement('div');
+        metaEl.className = 'slot-row-meta';
+        metaEl.textContent = `${new Date(slot.savedAt).toLocaleString('ko-KR')} · 건물 ${slot.buildingCount}개 · ${slot.money}원`;
+
+        infoEl.appendChild(labelEl);
+        infoEl.appendChild(metaEl);
+        rowEl.appendChild(infoEl);
+
+        if (this.callbacks.onDeleteSlot) {
+            const deleteEl = document.createElement('button');
+            deleteEl.type = 'button';
+            deleteEl.className = 'slot-row-delete';
+            deleteEl.textContent = '삭제';
+            deleteEl.addEventListener('click', (event) => {
+                event.stopPropagation();
+                if (window.confirm(`'${slot.label}' 슬롯을 삭제할까요? 되돌릴 수 없습니다.`)) {
+                    this.callbacks.onDeleteSlot(slot.id);
+                }
+            });
+            rowEl.appendChild(deleteEl);
+        }
+
+        return rowEl;
     }
 }
 
@@ -1102,6 +1214,8 @@ export class UIManager {
         this.miniLog = null;
         /** @type {SavePanel | null} */
         this.savePanel = null;
+        /** @type {SaveSlotPicker | null} */
+        this.saveSlotPicker = null;
         /** @type {ObjectivePanel | null} */
         this.objectivePanel = null;
         this.recipePanel = null;
@@ -1152,11 +1266,21 @@ export class UIManager {
     /**
      * @param {HTMLElement} containerEl
      * @param {() => void} onSaveClick
+     * @param {() => void} onSaveAsClick
      * @param {() => void} onLoadClick
      */
-    initSavePanel(containerEl, onSaveClick, onLoadClick) {
-        this.savePanel = new SavePanel(containerEl, onSaveClick, onLoadClick);
+    initSavePanel(containerEl, onSaveClick, onSaveAsClick, onLoadClick) {
+        this.savePanel = new SavePanel(containerEl, onSaveClick, onSaveAsClick, onLoadClick);
         return this.savePanel;
+    }
+
+    /**
+     * @param {HTMLElement} containerEl
+     * @param {{onSelectSlot: (slotId: string) => void, onNewGame?: () => void, onDeleteSlot?: (slotId: string) => void}} callbacks
+     */
+    initSaveSlotPicker(containerEl, callbacks) {
+        this.saveSlotPicker = new SaveSlotPicker(containerEl, callbacks);
+        return this.saveSlotPicker;
     }
 
     /** @param {HTMLElement} containerEl */

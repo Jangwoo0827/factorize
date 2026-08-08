@@ -12,8 +12,10 @@
     <!-- 좌상단 브랜드 로고 (Canvas가 아닌 DOM으로 처리) -->
     <div id="brand" class="brand">FACTORIZE</div>
 
-    <!-- 우상단 저장/불러오기 패널 -->
+    <!-- 우상단 저장/다른 이름으로 저장/불러오기 패널 -->
     <div id="save-panel" class="panel panel--save"></div>
+    <!-- "불러오기" 버튼을 누르면 열리는 저장 슬롯 목록 -->
+    <div id="load-panel" class="panel panel--load"></div>
 
     <button id="recipe-toggle" class="recipe-toggle" type="button">제작 레시피</button>
     <div id="recipe-panel" class="panel panel--recipes"></div>
@@ -78,6 +80,15 @@
     <!-- 우하단 미니맵: 항상 표시, 클릭하면 그 위치로 카메라 이동 -->
     <div id="minimap-panel" class="panel panel--minimap">
         <canvas id="minimap-canvas"></canvas>
+    </div>
+
+    <!-- 시작 화면: 저장 슬롯을 골라 이어하거나 새 게임을 시작한다. main.js가
+         게임을 만들기 전에 이 오버레이를 먼저 보여주고, 선택이 끝나면 숨긴다. -->
+    <div id="launcher-overlay" class="launcher-overlay">
+        <div class="launcher-box">
+            <div class="launcher-brand">FACTORIZE</div>
+            <div id="launcher-slot-picker"></div>
+        </div>
     </div>
 
     <!-- 치명적 오류 발생 시 노출되는 오버레이 -->
