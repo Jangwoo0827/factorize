@@ -177,6 +177,21 @@ html, body {
     max-width: 420px;
 }
 
+.panel--minimap {
+    right: 16px;
+    bottom: 16px;
+    padding: 6px;
+    pointer-events: auto;
+}
+
+.panel--minimap canvas {
+    display: block;
+    width: 160px;
+    height: 160px;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
 .panel--save {
     top: 16px;
     right: 16px;

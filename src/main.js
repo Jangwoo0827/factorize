@@ -58,6 +58,7 @@ function bootstrap() {
         settingsPanel: requireElement('settings-panel'),
         progressToggle: requireElement('progress-toggle'),
         progressPanel: requireElement('progress-panel'),
+        minimapCanvas: requireElement('minimap-canvas'),
     };
 
     const missingRequired = !canvas
@@ -75,7 +76,8 @@ function bootstrap() {
         || !uiElements.settingsToggle
         || !uiElements.settingsPanel
         || !uiElements.progressToggle
-        || !uiElements.progressPanel;
+        || !uiElements.progressPanel
+        || !uiElements.minimapCanvas;
 
     if (missingRequired) {
         showFatalError('필수 UI 요소를 찾을 수 없습니다. index.html이 최신 버전인지 확인해주세요.');

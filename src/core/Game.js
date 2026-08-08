@@ -17,7 +17,7 @@ import { Loop } from './Loop.js';
 import { Camera } from './Camera.js';
 import { InputManager } from './InputManager.js';
 import { World } from '../world/World.js';
-import { Renderer } from '../rendering/Renderer.js';
+import { MinimapRenderer, Renderer } from '../rendering/Renderer.js';
 import { Assembler, createBuilding, Direction, Miner, Storage } from '../entities/Building.js';
 import { UIManager, BULLDOZE_TOOL_ID, BLUEPRINT_TOOL_ID, MULTI_SELECT_TOOL_ID } from '../ui/UIManager.js';
 import { PowerSystem } from '../systems/Systems.js';
@@ -42,9 +42,18 @@ export class Game {
         this.world = new World(CONFIG.WORLD.CHUNK_SIZE);
         this.camera = new Camera();
         this.renderer = new Renderer(canvas);
+        this.minimapRenderer = new MinimapRenderer(uiElements.minimapCanvas);
         this.uiManager = new UIManager();
         this.saveManager = new SaveManager(this.world, this.camera);
         this.autoSaveTimer = 0;
+
+        // 미니맵 클릭 = 그 위치로 카메라 이동. 드래그로 오인하지 않도록 클릭
+        // 좌표는 canvas 자신의 bounding rect 기준으로 계산한다.
+        uiElements.minimapCanvas.addEventListener('click', (event) => {
+            const rect = uiElements.minimapCanvas.getBoundingClientRect();
+            const world = this.minimapRenderer.canvasToWorld(event.clientX - rect.left, event.clientY - rect.top);
+            if (world) this.camera.panTo(world.x, world.y);
+        });
 
         this.inputManager = new InputManager(canvas, this.camera, {
             onPrimaryAction: (tileX, tileY) => this.#handlePrimaryAction(tileX, tileY),
@@ -531,6 +540,7 @@ export class Game {
         this.buildMenuPanel.updateAffordability(this.world.economy);
         this.productionGraphPanel.update(this.world.stats);
         this.progressPanel.update(this.world);
+        this.minimapRenderer.render(this.world, this.camera);
         this.#updateStatusBar();
     }
 

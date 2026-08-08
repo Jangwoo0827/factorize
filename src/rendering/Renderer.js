@@ -1,7 +1,7 @@
 /**
  * src/rendering/Renderer.js
  * ------------------------------------------------------------------
- * 이 파일에 포함된 클래스: Renderer
+ * 이 파일에 포함된 클래스: Renderer, MinimapRenderer
  * (이후 TileRenderer / EntityRenderer / DebugRenderer 로직도
  *  이 파일 내부에 메서드 또는 클래스로 추가될 예정 - Phase 3+)
  *
@@ -325,5 +325,137 @@ export class Renderer {
         ctx.lineTo(screen.x, screen.y + size);
         ctx.stroke();
         ctx.restore();
+    }
+}
+
+/**
+ * 우하단에 항상 떠 있는 작은 미니맵. 배치된 모든 건물 + 원점을 포함하는
+ * 정사각형 영역을 미니맵 크기에 맞게 축소해서 점으로 찍고, 지금 메인
+ * 카메라가 보고 있는 범위를 사각형으로 표시한다. 건물이 거의 없을 때
+ * 지나치게 확대되지 않도록 최소 표시 반경(MIN_SPAN_TILES)을 둔다.
+ * 청크 컬링을 쓰는 메인 렌더러와 달리, 미니맵은 "배치된 건물 수"에만
+ * 비례하는 가벼운 순회라 매 프레임 다시 그려도 부담이 없다.
+ */
+export class MinimapRenderer {
+    /** 건물이 거의 없을 때도 미니맵이 과도하게 확대되지 않도록 보장하는 최소 표시 반경(타일). */
+    static MIN_SPAN_TILES = 40;
+    /** 바운딩 박스 바깥으로 남겨두는 여백(타일). */
+    static PADDING_TILES = 10;
+
+    /**
+     * @param {HTMLCanvasElement} canvas
+     */
+    constructor(canvas) {
+        this.canvas = canvas;
+        this.ctx = canvas.getContext('2d');
+        this.size = 160; // CSS px 기준 정사각형 한 변
+        this.dpr = window.devicePixelRatio || 1;
+
+        this.canvas.width = Math.round(this.size * this.dpr);
+        this.canvas.height = Math.round(this.size * this.dpr);
+        this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+
+        /** 가장 최근에 그린 타일 좌표 바운딩 박스 - 클릭 좌표를 월드로 되돌릴 때 사용. */
+        this.lastBounds = null;
+    }
+
+    /**
+     * @param {import('../world/World.js').World} world
+     * @param {import('../core/Camera.js').Camera} camera
+     */
+    render(world, camera) {
+        if (!this.ctx) return;
+        const { ctx, size } = this;
+        const tileSize = CONFIG.TILE.SIZE;
+
+        ctx.fillStyle = CONFIG.RENDER.BG_COLOR;
+        ctx.fillRect(0, 0, size, size);
+
+        const buildings = [...world.getAllBuildings()];
+        const cameraTileX = camera.x / tileSize;
+        const cameraTileY = camera.y / tileSize;
+
+        // 카메라 위치를 항상 포함하는 바운딩 박스를 만들고, 건물이 있으면 전부 포함하도록 넓힌다.
+        let minX = cameraTileX;
+        let maxX = cameraTileX;
+        let minY = cameraTileY;
+        let maxY = cameraTileY;
+        for (const building of buildings) {
+            minX = Math.min(minX, building.tileX);
+            maxX = Math.max(maxX, building.tileX);
+            minY = Math.min(minY, building.tileY);
+            maxY = Math.max(maxY, building.tileY);
+        }
+
+        minX -= MinimapRenderer.PADDING_TILES;
+        maxX += MinimapRenderer.PADDING_TILES;
+        minY -= MinimapRenderer.PADDING_TILES;
+        maxY += MinimapRenderer.PADDING_TILES;
+
+        // 정사각형 미니맵에 맞춰 더 긴 변을 기준으로 정사각형화하고,
+        // 건물이 거의 없어도 너무 확대되지 않도록 최소 반경을 보장한다.
+        const span = Math.max(maxX - minX, maxY - minY, MinimapRenderer.MIN_SPAN_TILES);
+        const centerX = (minX + maxX) / 2;
+        const centerY = (minY + maxY) / 2;
+        minX = centerX - span / 2;
+        maxX = centerX + span / 2;
+        minY = centerY - span / 2;
+        maxY = centerY + span / 2;
+
+        this.lastBounds = { minX, minY, maxX, maxY };
+        const scale = size / span; // 미니맵 px / 타일
+
+        const toMinimap = (tileX, tileY) => ({
+            x: (tileX - minX) * scale,
+            y: (tileY - minY) * scale,
+        });
+
+        for (const building of buildings) {
+            const p = toMinimap(building.tileX + 0.5, building.tileY + 0.5);
+            ctx.fillStyle = building.definition?.color ?? CONFIG.RENDER.ACCENT_CYAN;
+            ctx.fillRect(p.x - 1.2, p.y - 1.2, 2.4, 2.4);
+        }
+
+        // 원점(0, 0) 마커 - 메인 화면의 십자 마커와 같은 의미.
+        const origin = toMinimap(0, 0);
+        ctx.strokeStyle = CONFIG.RENDER.ORIGIN_MARKER_COLOR;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(origin.x - 3, origin.y);
+        ctx.lineTo(origin.x + 3, origin.y);
+        ctx.moveTo(origin.x, origin.y - 3);
+        ctx.lineTo(origin.x, origin.y + 3);
+        ctx.stroke();
+
+        // 현재 메인 카메라가 보고 있는 영역을 사각형으로 표시.
+        const visible = camera.getVisibleWorldBounds();
+        const viewTopLeft = toMinimap(visible.minX / tileSize, visible.minY / tileSize);
+        const viewBottomRight = toMinimap(visible.maxX / tileSize, visible.maxY / tileSize);
+        ctx.strokeStyle = CONFIG.RENDER.ACCENT_CYAN;
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(
+            viewTopLeft.x,
+            viewTopLeft.y,
+            viewBottomRight.x - viewTopLeft.x,
+            viewBottomRight.y - viewTopLeft.y,
+        );
+    }
+
+    /**
+     * 미니맵 캔버스 안의 클릭 좌표(CSS px)를 월드 좌표로 변환한다.
+     * 아직 한 번도 render()하지 않았으면 null.
+     * @param {number} canvasX
+     * @param {number} canvasY
+     * @returns {{x: number, y: number} | null}
+     */
+    canvasToWorld(canvasX, canvasY) {
+        if (!this.lastBounds) return null;
+        const { minX, minY, maxX } = this.lastBounds;
+        const scale = this.size / (maxX - minX);
+        const tileSize = CONFIG.TILE.SIZE;
+        return {
+            x: (minX + canvasX / scale) * tileSize,
+            y: (minY + canvasY / scale) * tileSize,
+        };
     }
 }

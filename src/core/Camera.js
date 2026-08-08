@@ -92,6 +92,17 @@ export class Camera {
     }
 
     /**
+     * 목표 위치를 특정 월드 좌표로 바꾼다 (실제 이동은 update()의 보간이 처리).
+     * 미니맵 클릭처럼 "이 위치로 이동" 액션에 사용한다.
+     * @param {number} worldX
+     * @param {number} worldY
+     */
+    panTo(worldX, worldY) {
+        this.targetX = worldX;
+        this.targetY = worldY;
+    }
+
+    /**
      * 목표값으로 현재값을 서서히 수렴시킨다. 매 고정 타임스텝마다 호출된다.
      * @param {number} dt
      */
