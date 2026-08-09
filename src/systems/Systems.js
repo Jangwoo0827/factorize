@@ -1,7 +1,7 @@
 /**
  * src/systems/Systems.js
  * ------------------------------------------------------------------
- * 이 파일에 포함된 클래스: Economy, ProductionStats, PowerSystem, ResearchSystem, AchievementSystem
+ * 이 파일에 포함된 클래스: Economy, ProductionStats, PowerSystem, ResearchSystem, AchievementSystem, ContractSystem
  *
  * 지금까지는 각 건물이 스스로 행동을 아는 다형성 방식으로 충분했지만,
  * "자금", "전력망", "연구 진행 상태"는 여러 건물/UI에 걸친 전역
@@ -11,6 +11,7 @@
 
 import { CONFIG } from '../../config.js';
 import { DIRECTION_VECTORS } from '../entities/Building.js';
+import { Logger } from '../utils/Utils.js';
 
 export class Economy {
     /**
@@ -198,6 +199,8 @@ export class PowerSystem {
         this.networks = [];
         /** true면 다음 update()에서 위상을 다시 계산한다. */
         this.isDirty = true;
+        /** 직전 틱 기준 전력망 중 하나라도 공급비율이 1 미만이었는지 - 경고 알림의 edge trigger용. */
+        this.hasShortage = false;
     }
 
     /** 전력 건물이 배치/철거되어 그래프 위상이 바뀌었을 수 있음을 표시한다. */
@@ -206,7 +209,9 @@ export class PowerSystem {
     }
 
     /**
-     * 매 틱 호출되어 전력망을 재계산한다.
+     * 매 틱 호출되어 전력망을 재계산한다. 이미 매 틱 모든 망을 순회하며 공급/
+     * 수요를 계산하는 김에, 부족한 망이 하나라도 있는지도 같이 추적해서
+     * "방금 부족해지기 시작했을 때"만 한 번 경고한다(부족한 동안 매 틱 스팸하지 않도록).
      * @param {import('../world/World.js').World} world
      */
     update(world) {
@@ -215,9 +220,17 @@ export class PowerSystem {
             this.isDirty = false;
         }
 
+        let anyShortage = false;
         for (const network of this.networks) {
-            PowerSystem.#applyNetwork(network);
+            if (PowerSystem.#applyNetwork(network) < 1) anyShortage = true;
         }
+
+        if (anyShortage && !this.hasShortage) {
+            Logger.warn('⚡ 전력이 부족합니다 - 일부 라인이 느려지고 있습니다.');
+        } else if (!anyShortage && this.hasShortage) {
+            Logger.info('전력 공급이 정상화되었습니다.');
+        }
+        this.hasShortage = anyShortage;
     }
 
     /**
@@ -265,6 +278,7 @@ export class PowerSystem {
     /**
      * 전력망 하나의 공급/수요를 합산해 비율을 계산하고, 소속 건물에 반영한다.
      * @param {import('../entities/Building.js').Building[]} network
+     * @returns {number} 이 망의 공급 비율(0~1) - 부족 알림 판정에 쓰인다.
      */
     static #applyNetwork(network) {
         let totalSupply = 0;
@@ -281,6 +295,8 @@ export class PowerSystem {
         for (const building of network) {
             building.setPowerRatio(ratio);
         }
+
+        return ratio;
     }
 }
 
@@ -425,6 +441,8 @@ export class AchievementSystem {
                 return world.getAllBuildings().size >= achievement.target;
             case 'techUnlocked':
                 return world.researchSystem.isUnlocked(achievement.target);
+            case 'contractsCompleted':
+                return world.contracts.completedCount >= achievement.target;
             default:
                 return false;
         }
@@ -451,5 +469,87 @@ export class AchievementSystem {
      */
     restoreState(data) {
         this.unlockedIds = new Set(data?.unlockedIds ?? []);
+    }
+}
+
+/**
+ * CONFIG.CONTRACTS(데이터) 중 하나를 "지금 진행 중인 계약"으로 들고 있다가,
+ * ContractOffice 건물이 배달한 아이템을 반영해 요구 수량을 채우면 보상(돈+RP)을
+ * 주고 다음 계약으로 넘어간다. 판매기는 아무거나 팔면 되지만, 계약은 정해진
+ * 조합을 다 채워야 완료되는 반복 가능한 중간 목표다.
+ */
+export class ContractSystem {
+    constructor() {
+        /**
+         * @type {{id: string, label: string, requirements: Record<string, number>,
+         *   reward: {money?: number, rp?: number}, progress: Record<string, number>} | null}
+         */
+        this.active = null;
+        /** 지금까지 완료한 계약 수 (업적이 참조한다). */
+        this.completedCount = 0;
+        this.#rollNewContract();
+    }
+
+    /**
+     * 이 자원이 지금 계약에 필요하고 아직 다 안 채워졌는지. ContractOffice가
+     * canAcceptItem()에서 미리 걸러내는 데 쓴다 - 필요 없는 아이템은 애초에 안 받는다.
+     * @param {string} resourceType
+     * @returns {boolean}
+     */
+    needsResource(resourceType) {
+        if (!this.active) return false;
+        const need = this.active.requirements[resourceType];
+        if (!need) return false;
+        return (this.active.progress[resourceType] ?? 0) < need;
+    }
+
+    /**
+     * ContractOffice가 아이템 하나를 받을 때마다 호출한다. needsResource()가
+     * true였던 경우에만 호출되어야 한다.
+     * @param {string} resourceType
+     */
+    deliver(resourceType) {
+        if (!this.active) return;
+        const have = this.active.progress[resourceType] ?? 0;
+        this.active.progress[resourceType] = have + 1;
+    }
+
+    /** 지금 계약의 모든 요구 수량이 채워졌는지. */
+    isComplete() {
+        if (!this.active) return false;
+        return Object.entries(this.active.requirements).every(
+            ([type, need]) => (this.active.progress[type] ?? 0) >= need,
+        );
+    }
+
+    /**
+     * 완료 처리 - 보상을 반환하고 완료 횟수를 늘린 뒤 다음 계약으로 넘어간다.
+     * isComplete()가 true일 때만 호출해야 한다.
+     * @returns {{money?: number, rp?: number}}
+     */
+    complete() {
+        const reward = this.active.reward;
+        this.completedCount += 1;
+        this.#rollNewContract();
+        return reward;
+    }
+
+    #rollNewContract() {
+        const pool = CONFIG.CONTRACTS;
+        const def = pool[Math.floor(Math.random() * pool.length)];
+        this.active = { ...def, progress: {} };
+    }
+
+    serialize() {
+        return { active: this.active, completedCount: this.completedCount };
+    }
+
+    /**
+     * @param {object} data
+     */
+    restoreState(data) {
+        this.active = data?.active ?? null;
+        this.completedCount = data?.completedCount ?? 0;
+        if (!this.active) this.#rollNewContract();
     }
 }

@@ -879,6 +879,81 @@ html, body {
     color: var(--color-text-dim);
 }
 
+.contract-toggle {
+    top: 224px;
+}
+
+.panel--contract {
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    display: none;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 5px;
+    min-width: 300px;
+    max-width: min(420px, calc(100vw - 32px));
+    max-height: calc(100vh - 120px);
+    overflow-y: auto;
+    padding: 18px;
+    pointer-events: auto;
+    z-index: 20;
+}
+
+.panel--contract.is-open { display: flex; }
+
+.contract-body {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.contract-empty {
+    font-size: 12px;
+    color: var(--color-text-dim);
+}
+
+.contract-label {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--color-text);
+}
+
+.contract-requirement {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.contract-requirement-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+}
+
+.contract-requirement-name {
+    font-weight: 600;
+}
+
+.contract-requirement-count {
+    color: var(--color-text-dim);
+    font-variant-numeric: tabular-nums;
+}
+
+.contract-reward {
+    margin-top: 4px;
+    font-size: 12px;
+    color: var(--color-accent-amber);
+}
+
+.contract-stats {
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px solid var(--color-panel-border);
+    font-size: 11px;
+    color: var(--color-text-dim);
+}
+
 .panel--graph {
     top: 50%;
     left: 50%;

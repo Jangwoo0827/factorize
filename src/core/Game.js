@@ -62,6 +62,12 @@ export class Game {
         // 시작 직후 첫 프레임에도 미니맵이 바로 그려지도록 true로 시작한다.
         this.shouldRedrawMinimap = true;
 
+        // 막힘 경고: 건물이 많으면 매 틱 정밀 검사가 비싸므로, 이미 매 틱 돌고
+        // 있는 건물 업데이트 루프에 몇 초에 한 번만 곁다리로 세는 식으로 얹는다
+        // (별도의 두 번째 순회를 만들지 않기 위함 - 성능 최적화).
+        this.blockageSampleTimer = 0;
+        this.blockageAlertActive = false;
+
         // 미니맵 클릭 = 그 위치로 카메라 이동. 드래그로 오인하지 않도록 클릭
         // 좌표는 canvas 자신의 bounding rect 기준으로 계산한다.
         uiElements.minimapCanvas.addEventListener('click', (event) => {
@@ -138,6 +144,7 @@ export class Game {
         this.productionGraphPanel = this.uiManager.initProductionGraphPanel(uiElements.graphToggle, uiElements.graphPanel);
         this.settingsPanel = this.uiManager.initSettingsPanel(uiElements.settingsToggle, uiElements.settingsPanel);
         this.progressPanel = this.uiManager.initProgressPanel(uiElements.progressToggle, uiElements.progressPanel);
+        this.contractPanel = this.uiManager.initContractPanel(uiElements.contractToggle, uiElements.contractPanel);
 
         this.loop = new Loop(
             (dt) => this.#update(dt),
@@ -571,8 +578,18 @@ export class Game {
         // 건물 업데이트보다 먼저 전력망을 계산한다.
         this.world.powerSystem.update(this.world);
 
+        this.blockageSampleTimer += dt;
+        const sampleBlockage = this.blockageSampleTimer >= CONFIG.ALERTS.BLOCKAGE_SAMPLE_INTERVAL;
+        let blockedCount = 0;
+
         for (const building of this.world.getAllBuildings()) {
             building.update(dt, this.world);
+            if (sampleBlockage && building.isBlocked()) blockedCount += 1;
+        }
+
+        if (sampleBlockage) {
+            this.blockageSampleTimer = 0;
+            this.#checkBlockageAlert(blockedCount, this.world.getAllBuildings().size);
         }
 
         this.world.stats.update(dt);
@@ -602,6 +619,25 @@ export class Game {
         for (const achievement of newlyUnlocked) {
             Logger.info(`업적 달성: ${achievement.label}`);
         }
+    }
+
+    /**
+     * 막힌 건물 수가 "정상적인 배압" 수준을 넘어서면 한 번만 경고하고, 다시
+     * 정상화되면 한 번만 알린다(edge trigger) - 막혀 있는 몇 초마다 계속
+     * 스팸하지 않도록.
+     * @param {number} blockedCount
+     * @param {number} totalCount
+     */
+    #checkBlockageAlert(blockedCount, totalCount) {
+        const ratio = totalCount > 0 ? blockedCount / totalCount : 0;
+        const isJammed = blockedCount >= CONFIG.ALERTS.BLOCKAGE_MIN_COUNT && ratio >= CONFIG.ALERTS.BLOCKAGE_MIN_RATIO;
+
+        if (isJammed && !this.blockageAlertActive) {
+            Logger.warn(`🚧 생산 라인이 막혀 있습니다 (${blockedCount}개 건물)`);
+        } else if (!isJammed && this.blockageAlertActive) {
+            Logger.info('막혀 있던 생산 라인이 다시 흐르고 있습니다.');
+        }
+        this.blockageAlertActive = isJammed;
     }
 
     /**
@@ -638,6 +674,7 @@ export class Game {
         this.buildMenuPanel.updateAffordability(this.world.economy);
         this.productionGraphPanel.update(this.world.stats);
         this.progressPanel.update(this.world);
+        this.contractPanel.update(this.world);
 
         if (this.shouldRedrawMinimap) {
             this.shouldRedrawMinimap = false;

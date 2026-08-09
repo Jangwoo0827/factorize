@@ -1145,6 +1145,120 @@ export class ProgressPanel {
 }
 
 /**
+ * 버튼으로 열고 닫는 계약 패널. 지금 활성 계약(world.contracts.active)의
+ * 요구 자원별 진행도를 보여준다. 실제 판정/보상 로직은 ContractSystem이 갖고
+ * 있고, 이 패널은 읽기만 한다 - 계약소(ContractOffice) 건물이 배달을 받으면
+ * 알아서 진행되고, 다 채워지면 자동으로 다음 계약으로 바뀐다.
+ */
+export class ContractPanel {
+    /**
+     * @param {HTMLElement} toggleEl
+     * @param {HTMLElement} containerEl
+     */
+    constructor(toggleEl, containerEl) {
+        this.toggleEl = toggleEl;
+        this.containerEl = containerEl;
+        this.isOpen = false;
+
+        this.titleEl = document.createElement('div');
+        this.titleEl.className = 'settings-heading';
+        this.titleEl.textContent = '진행 중인 계약';
+
+        this.bodyEl = document.createElement('div');
+        this.bodyEl.className = 'contract-body';
+
+        this.statsEl = document.createElement('div');
+        this.statsEl.className = 'contract-stats';
+
+        this.containerEl.appendChild(this.titleEl);
+        this.containerEl.appendChild(this.bodyEl);
+        this.containerEl.appendChild(this.statsEl);
+
+        this.toggleEl.addEventListener('click', () => {
+            this.isOpen = !this.isOpen;
+            this.containerEl.classList.toggle('is-open', this.isOpen);
+            this.toggleEl.classList.toggle('is-active', this.isOpen);
+        });
+    }
+
+    /**
+     * 열려 있을 때만 실제로 다시 그린다 (ProgressPanel과 같은 패턴).
+     * @param {import('../world/World.js').World} world
+     */
+    update(world) {
+        if (!this.isOpen) return;
+
+        const contract = world.contracts.active;
+        this.bodyEl.innerHTML = '';
+
+        if (!contract) {
+            const emptyEl = document.createElement('div');
+            emptyEl.className = 'contract-empty';
+            emptyEl.textContent = '진행 중인 계약이 없습니다.';
+            this.bodyEl.appendChild(emptyEl);
+        } else {
+            const labelEl = document.createElement('div');
+            labelEl.className = 'contract-label';
+            labelEl.textContent = contract.label;
+            this.bodyEl.appendChild(labelEl);
+
+            for (const [resourceType, need] of Object.entries(contract.requirements)) {
+                this.bodyEl.appendChild(this.#createRequirementRow(resourceType, need, contract.progress[resourceType] ?? 0));
+            }
+
+            const rewardEl = document.createElement('div');
+            rewardEl.className = 'contract-reward';
+            const parts = [];
+            if (contract.reward.money) parts.push(`${contract.reward.money}원`);
+            if (contract.reward.rp) parts.push(`RP ${contract.reward.rp}`);
+            rewardEl.textContent = `보상: ${parts.join(' + ')}`;
+            this.bodyEl.appendChild(rewardEl);
+        }
+
+        this.statsEl.textContent = `완료한 계약: ${world.contracts.completedCount}건`;
+    }
+
+    /**
+     * @param {string} resourceType
+     * @param {number} need
+     * @param {number} have
+     */
+    #createRequirementRow(resourceType, need, have) {
+        const clampedHave = Math.min(have, need);
+        const def = ResourceRegistry.getDefinition(resourceType);
+
+        const wrapperEl = document.createElement('div');
+        wrapperEl.className = 'contract-requirement';
+
+        const rowEl = document.createElement('div');
+        rowEl.className = 'contract-requirement-row';
+
+        const nameEl = document.createElement('span');
+        nameEl.className = 'contract-requirement-name';
+        nameEl.textContent = def?.label ?? resourceType;
+        if (def?.color) nameEl.style.color = def.color;
+
+        const countEl = document.createElement('span');
+        countEl.className = 'contract-requirement-count';
+        countEl.textContent = `${clampedHave} / ${need}`;
+
+        rowEl.appendChild(nameEl);
+        rowEl.appendChild(countEl);
+
+        const barOuterEl = document.createElement('div');
+        barOuterEl.className = 'progress-bar';
+        const barFillEl = document.createElement('div');
+        barFillEl.className = 'progress-bar-fill';
+        barFillEl.style.width = `${Math.round((clampedHave / need) * 100)}%`;
+        barOuterEl.appendChild(barFillEl);
+
+        wrapperEl.appendChild(rowEl);
+        wrapperEl.appendChild(barOuterEl);
+        return wrapperEl;
+    }
+}
+
+/**
  * 초반 플레이어가 다음에 무엇을 해야 할지 잃지 않도록 현재 목표를 한 줄로 표시한다.
  * 건물 수와 판매 실적만 읽으므로 게임 상태를 변경하지 않는다.
  */
@@ -1225,6 +1339,8 @@ export class UIManager {
         this.settingsPanel = null;
         /** @type {ProgressPanel | null} */
         this.progressPanel = null;
+        /** @type {ContractPanel | null} */
+        this.contractPanel = null;
     }
 
     /**
@@ -1319,5 +1435,14 @@ export class UIManager {
     initProgressPanel(toggleEl, containerEl) {
         this.progressPanel = new ProgressPanel(toggleEl, containerEl);
         return this.progressPanel;
+    }
+
+    /**
+     * @param {HTMLElement} toggleEl
+     * @param {HTMLElement} containerEl
+     */
+    initContractPanel(toggleEl, containerEl) {
+        this.contractPanel = new ContractPanel(toggleEl, containerEl);
+        return this.contractPanel;
     }
 }

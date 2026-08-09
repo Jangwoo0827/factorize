@@ -16,7 +16,7 @@
 import { CONFIG } from '../../config.js';
 import { Entity, Item } from './Entity.js';
 import { ResourceRegistry } from '../resources/Resources.js';
-import { ObjectPool } from '../utils/Utils.js';
+import { ObjectPool, Logger } from '../utils/Utils.js';
 
 /**
  * 채굴기/용광로가 새 아이템을 만들 때마다 new Item()을 호출하는 대신,
@@ -225,10 +225,13 @@ export class Building extends Entity {
      * 이 건물이 지금 아이템 하나를 받아들일 수 있는지 여부.
      * 기본값은 false이며, 아이템을 받을 수 있는 건물(Conveyor, Storage 등)이 override한다.
      * @param {Item} item
+     * @param {import('../world/World.js').World} [world] 전역 상태(활성 계약 등)를 참조해야 하는
+     *   건물(ContractOffice 등)을 위해 전달된다. tryDeliverItem이 넘겨준다.
      * @returns {boolean}
      */
-    canAcceptItem(item) {
+    canAcceptItem(item, world) {
         void item;
+        void world;
         return false;
     }
 
@@ -251,6 +254,17 @@ export class Building extends Entity {
      */
     getProgressRatio() {
         return null;
+    }
+
+    /**
+     * 이 건물이 지금 배출/전달이 막혀서 대기 중인지 여부. 경고/알림 시스템이
+     * 주기적으로 샘플링해 "막힌 건물 수"를 센다. 기본값은 false이며, 완제품을
+     * 만들어 배출하는 건물(Miner, Furnace 등)과 아이템을 운반하는 건물
+     * (Conveyor, Inserter 등)이 override한다.
+     * @returns {boolean}
+     */
+    isBlocked() {
+        return false;
     }
 
     /**
@@ -613,7 +627,7 @@ export function tryDeliverItem(world, fromTileX, fromTileY, direction, item) {
     const vec = DIRECTION_VECTORS[direction];
     const targetBuilding = world.getBuildingAt(fromTileX + vec.x, fromTileY + vec.y);
 
-    if (!targetBuilding || !targetBuilding.canAcceptItem(item)) {
+    if (!targetBuilding || !targetBuilding.canAcceptItem(item, world)) {
         return false;
     }
 
@@ -657,6 +671,10 @@ export class Miner extends Building {
     /** 이 등급의 채굴기가 아이템 하나를 만드는 데 걸리는 시간(초). */
     #getInterval() {
         return this.definition.miningInterval ?? CONFIG.PRODUCTION.MINER_INTERVAL;
+    }
+
+    isBlocked() {
+        return this.pendingOutput !== null;
     }
 
     /**
@@ -781,6 +799,12 @@ export class Conveyor extends Building {
 
     getPowerDemand() {
         return this.definition.powerDemand ?? CONFIG.POWER.CONVEYOR_DEMAND;
+    }
+
+    /** 맨 앞 아이템이 배출 지점(progress=1)에 도착했는데 다음 칸이 안 받아줘서 대기 중인지. */
+    isBlocked() {
+        if (this.items.length === 0) return false;
+        return this.items[this.items.length - 1].progress >= 1;
     }
 
     /** 진입 지점(progress=0)에 새 아이템을 넣을 여유 공간이 있는지 확인한다. */
@@ -993,6 +1017,10 @@ export class Furnace extends Building {
         return Boolean(CONFIG.RECIPES[item.resourceType]);
     }
 
+    isBlocked() {
+        return this.pendingOutput !== null;
+    }
+
     acceptItem(item) {
         this.inputItem = item;
         this.smeltTimer = 0;
@@ -1123,6 +1151,68 @@ export class Seller extends Building {
     }
 }
 
+/**
+ * 판매기와 달리 아무거나 받지 않고, 지금 활성 계약(world.contracts)이 필요로
+ * 하는 자원만 받아 그 진행도에 반영한다. 계약이 다 채워지면 보상(돈+RP)을 주고
+ * 다음 계약으로 넘어간다. 실제 판정/보상 로직은 world.contracts(ContractSystem)가
+ * 갖고 있고, 이 건물은 배달 지점 역할만 한다.
+ */
+export class ContractOffice extends Building {
+    /**
+     * @param {number} tileX
+     * @param {number} tileY
+     * @param {number} rotation
+     */
+    constructor(tileX, tileY, rotation) {
+        super(tileX, tileY, 'contract_office', rotation);
+        /** 이 건물이 지금까지 계약에 반영한 아이템 총 개수 (개별 인스펙터 표시용). */
+        this.totalDelivered = 0;
+    }
+
+    /**
+     * @param {Item} item
+     * @param {import('../world/World.js').World} world
+     */
+    canAcceptItem(item, world) {
+        return Boolean(world?.contracts?.needsResource(item.resourceType));
+    }
+
+    /**
+     * @param {Item} item
+     * @param {number} incomingDirection
+     * @param {import('../world/World.js').World} world
+     */
+    acceptItem(item, incomingDirection, world) {
+        world.contracts.deliver(item.resourceType);
+        this.totalDelivered += 1;
+        itemPool.release(item);
+
+        if (world.contracts.isComplete()) {
+            const finishedLabel = world.contracts.active.label;
+            const reward = world.contracts.complete();
+            if (reward.money) world.economy.addMoney(reward.money);
+            if (reward.rp) world.researchSystem.addResearchPoints(reward.rp);
+            Logger.info(`계약 완료: ${finishedLabel} (+${reward.money ?? 0}원, +${reward.rp ?? 0}RP)`);
+        }
+    }
+
+    getInspectorInfo() {
+        const info = super.getInspectorInfo();
+        info.push({ label: '누적 납품', value: `${this.totalDelivered}개` });
+        info.push({ label: '자세히 보기', value: '상단 "계약" 패널 참고' });
+        return info;
+    }
+
+    serialize() {
+        return { ...super.serialize(), totalDelivered: this.totalDelivered };
+    }
+
+    restoreState(data) {
+        super.restoreState(data);
+        this.totalDelivered = data.totalDelivered ?? 0;
+    }
+}
+
 /** 전력망에 고정된 전력을 공급하는 건물 (Phase 5 범위: 연료 없이 항상 최대 출력). */
 export class Generator extends Building {
     /**
@@ -1249,6 +1339,10 @@ export class Inserter extends Building {
         return CONFIG.POWER.INSERTER_DEMAND;
     }
 
+    isBlocked() {
+        return this.heldItem !== null;
+    }
+
     update(dt, world) {
         if (this.heldItem) {
             if (tryDeliverItem(world, this.tileX, this.tileY, this.rotation, this.heldItem)) {
@@ -1322,6 +1416,10 @@ export class Splitter extends Building {
 
     getPowerDemand() {
         return CONFIG.POWER.ROUTER_DEMAND;
+    }
+
+    isBlocked() {
+        return this.pendingItem !== null;
     }
 
     canAcceptItem() {
@@ -1398,6 +1496,10 @@ export class Merger extends Building {
         return CONFIG.POWER.ROUTER_DEMAND;
     }
 
+    isBlocked() {
+        return this.pendingItem !== null;
+    }
+
     canAcceptItem() {
         return this.pendingItem === null;
     }
@@ -1455,6 +1557,7 @@ class Processor extends Building {
     getPowerDemand() { return CONFIG.POWER.FURNACE_DEMAND; }
     canAcceptItem(item) { return !this.inputItem && !this.pendingOutput && Boolean(CONFIG.PROCESSING_RECIPES[this.typeId][item.resourceType]); }
     acceptItem(item) { this.inputItem = item; this.timer = 0; }
+    isBlocked() { return this.pendingOutput !== null; }
     update(dt, world) {
         if (this.pendingOutput) {
             if (tryDeliverItem(world, this.tileX, this.tileY, this.rotation, this.pendingOutput)) this.pendingOutput = null;
@@ -1502,6 +1605,7 @@ export class Assembler extends Building {
     canAcceptItem(item) { return Boolean(this.recipe.inputs[item.resourceType]); }
     acceptItem(item) { this.inputCounts[item.resourceType] = (this.inputCounts[item.resourceType] ?? 0) + 1; itemPool.release(item); }
     hasIngredients() { return Object.entries(this.recipe.inputs).every(([id, count]) => (this.inputCounts[id] ?? 0) >= count); }
+    isBlocked() { return this.pendingOutput !== null; }
     update(dt, world) {
         if (this.pendingOutput) {
             if (tryDeliverItem(world, this.tileX, this.tileY, this.rotation, this.pendingOutput)) this.pendingOutput = null;
@@ -1541,6 +1645,7 @@ const BUILDING_CLASSES = {
     storage: Storage,
     furnace: Furnace,
     seller: Seller,
+    contract_office: ContractOffice,
     generator: GeneratorT1,
     generator_t2: GeneratorT2,
     generator_t3: GeneratorT3,

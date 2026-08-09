@@ -63,6 +63,8 @@ function bootstrap() {
         settingsPanel: requireElement('settings-panel'),
         progressToggle: requireElement('progress-toggle'),
         progressPanel: requireElement('progress-panel'),
+        contractToggle: requireElement('contract-toggle'),
+        contractPanel: requireElement('contract-panel'),
         minimapCanvas: requireElement('minimap-canvas'),
     };
     const launcherOverlay = requireElement('launcher-overlay');
@@ -85,6 +87,8 @@ function bootstrap() {
         || !uiElements.settingsPanel
         || !uiElements.progressToggle
         || !uiElements.progressPanel
+        || !uiElements.contractToggle
+        || !uiElements.contractPanel
         || !uiElements.minimapCanvas
         || !launcherOverlay
         || !launcherSlotPickerContainer;

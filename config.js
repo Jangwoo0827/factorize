@@ -146,6 +146,15 @@ export const CONFIG = {
         AUTO_SAVE_INTERVAL: 30, // 자동 저장 주기(초)
     },
 
+    // 경고/알림: 전력 부족은 PowerSystem이 매 틱 계산하는 공급비율을 그대로 쓰고,
+    // 막힘은 건물이 너무 많아 매 틱 정밀 검사하기엔 비싸므로 몇 초에 한 번만
+    // 샘플링한다 (성능 최적화 - v2.3 참고).
+    ALERTS: {
+        BLOCKAGE_SAMPLE_INTERVAL: 5, // 막힌 건물 수를 다시 세는 주기(초)
+        BLOCKAGE_MIN_COUNT: 5,       // 이 개수 미만이면 정상적인 배압으로 보고 무시
+        BLOCKAGE_MIN_RATIO: 0.02,    // 전체 건물 대비 이 비율 미만도 무시 (막힌 개수/전체 건물 수)
+    },
+
     // 마일스톤: "누적 수익"과 "초당 수익 최고 기록" 두 사다리. 순서대로 도달한다고
     // 가정하고, ProgressPanel이 world.stats.totalRevenue / peakIncomeRate와 비교해
     // 다음 목표까지 진행률을 보여준다 (별도 해금 상태를 저장하지 않음 - 두 수치
@@ -172,7 +181,8 @@ export const CONFIG = {
     // 이 배열에 항목만 추가하면 된다.
     // type: totalRevenue(누적 수익) | totalSold(누적 판매 개수) |
     //       itemProduced(해당 자원 최초 생산) | upgradeCount(누적 업그레이드 횟수) |
-    //       buildingCount(현재 배치된 건물 수) | techUnlocked(해당 기술 해금)
+    //       buildingCount(현재 배치된 건물 수) | techUnlocked(해당 기술 해금) |
+    //       contractsCompleted(완료한 계약 수)
     ACHIEVEMENTS: [
         { id: 'first_sale', label: '첫 판매', description: '판매기로 처음 자원을 판매했습니다.', type: 'totalSold', target: 1 },
         { id: 'sold_100', label: '판매왕', description: '누적 100개를 판매했습니다.', type: 'totalSold', target: 100 },
@@ -186,6 +196,22 @@ export const CONFIG = {
         { id: 'craft_power_core', label: '정점의 부품', description: '동력 코어를 처음 제작했습니다.', type: 'itemProduced', target: 'power_core' },
         { id: 'upgrade_10', label: '숙련된 기술자', description: '건물을 총 10회 업그레이드했습니다.', type: 'upgradeCount', target: 10 },
         { id: 'upgrade_50', label: '마스터 엔지니어', description: '건물을 총 50회 업그레이드했습니다.', type: 'upgradeCount', target: 50 },
+        { id: 'contract_1', label: '첫 계약', description: '계약을 처음 완료했습니다.', type: 'contractsCompleted', target: 1 },
+        { id: 'contract_20', label: '신뢰받는 공급처', description: '계약을 20건 완료했습니다.', type: 'contractsCompleted', target: 20 },
+    ],
+
+    // 계약: 판매기와 달리 정해진 조합을 다 채워야 완료된다. 완료하면 판매가보다
+    // 후한 보상(돈+RP)을 주고 다음 계약으로 넘어간다 - 반복 가능한 중간 목표.
+    // 난이도는 요구 자원의 등급에 따라 자연스럽게 낮음->높음으로 퍼져 있다.
+    CONTRACTS: [
+        { id: 'contract_ore_starter', label: '광석 공급', requirements: { iron_ore: 30, coal: 10 }, reward: { money: 120, rp: 5 } },
+        { id: 'contract_ingot_batch', label: '제련 부품 납품', requirements: { iron_ingot: 15, copper_ingot: 10 }, reward: { money: 250, rp: 12 } },
+        { id: 'contract_gear_set', label: '기어 세트 납품', requirements: { gear: 12 }, reward: { money: 280, rp: 15 } },
+        { id: 'contract_motor_line', label: '모터 라인 납품', requirements: { motor: 8, circuit: 8 }, reward: { money: 650, rp: 25 } },
+        { id: 'contract_precious_ore', label: '귀금속 광석 납품', requirements: { gold_ore: 15, titanium_ore: 15 }, reward: { money: 550, rp: 20 } },
+        { id: 'contract_advanced_ingot', label: '고급 합금 재료 납품', requirements: { gold_ingot: 10, titanium_ingot: 10 }, reward: { money: 950, rp: 35 } },
+        { id: 'contract_alloy_frame', label: '합금 프레임 납품', requirements: { alloy_frame: 6 }, reward: { money: 700, rp: 30 } },
+        { id: 'contract_power_core', label: '동력 코어 최종 납품', requirements: { power_core: 3 }, reward: { money: 900, rp: 60 } },
     ],
 
     // 업그레이드 - 모든 건물에 공통 적용되는 레벨업 규칙
@@ -365,6 +391,17 @@ export const CONFIG = {
             category: 'utility',
             // 원자재를 파는 기본 경제 순환은 연구로 막을 이유가 없어서 처음부터 사용 가능하게 둔다.
             // (연구 시스템은 용광로/제련만 심화 콘텐츠로 남겨둠)
+        },
+        contract_office: {
+            id: 'contract_office',
+            label: '계약소',
+            shape: 'square',
+            color: '#e8a33d',
+            cost: 45,
+            category: 'utility',
+            showDirectionIndicator: false,
+            // 판매기와 마찬가지로 처음부터 사용 가능 - 계약은 초반부터 방향을
+            // 제시해주는 목적도 있어서 연구로 막지 않는다.
         },
         generator: {
             id: 'generator',

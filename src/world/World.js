@@ -15,7 +15,7 @@
  */
 
 import { CONFIG } from '../../config.js';
-import { AchievementSystem, Economy, PowerSystem, ProductionStats, ResearchSystem } from '../systems/Systems.js';
+import { AchievementSystem, ContractSystem, Economy, PowerSystem, ProductionStats, ResearchSystem } from '../systems/Systems.js';
 import { deserializeBuilding } from '../entities/Building.js';
 
 /** 타일 종류. Phase 1에서는 GROUND만 존재하며, 이후 자원 타일이 추가된다. */
@@ -119,6 +119,9 @@ export class World {
          * 캐시된 위상으로 공급/수요만 다시 합산한다 (성능 최적화).
          */
         this.powerSystem = new PowerSystem();
+
+        /** 계약 진행 상태. 계약소(ContractOffice)가 배달을 반영하고, ContractPanel이 보여준다. */
+        this.contracts = new ContractSystem();
     }
 
     #chunkKey(chunkX, chunkY) {
@@ -258,6 +261,7 @@ export class World {
             },
             stats: this.stats.serialize(),
             achievements: this.achievements.serialize(),
+            contracts: this.contracts.serialize(),
         };
     }
 
@@ -282,5 +286,6 @@ export class World {
         this.researchSystem.restoreState(data.research);
         this.stats.restoreState(data.stats);
         this.achievements.restoreState(data.achievements);
+        this.contracts.restoreState(data.contracts);
     }
 }
