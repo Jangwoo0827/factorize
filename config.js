@@ -155,6 +155,11 @@ export const CONFIG = {
         BLOCKAGE_MIN_RATIO: 0.02,    // 전체 건물 대비 이 비율 미만도 무시 (막힌 개수/전체 건물 수)
     },
 
+    // 자동 건설소: 등록된 블루프린트를 몇 초에 한 번씩 다음 칸에 이어 짓는다.
+    AUTO_CONSTRUCTION: {
+        INTERVAL: 4, // 시도 간격(초). 레벨업 시 getSpeedMultiplier()만큼 짧아진다.
+    },
+
     // 마일스톤: "누적 수익"과 "초당 수익 최고 기록" 두 사다리. 순서대로 도달한다고
     // 가정하고, ProgressPanel이 world.stats.totalRevenue / peakIncomeRate와 비교해
     // 다음 목표까지 진행률을 보여준다 (별도 해금 상태를 저장하지 않음 - 두 수치
@@ -279,6 +284,11 @@ export const CONFIG = {
             cost: 95,
             prerequisites: ['tech_generator_t2', 'tech_processing'],
         },
+        tech_auto_construction: {
+            label: '자동 건설 공학',
+            cost: 150,
+            prerequisites: ['tech_assembly'],
+        },
     },
 
     // 건물 목록 UI(BuildMenuPanel)에 표시할 탭. 순서가 곧 탭이 나열되는 순서다.
@@ -391,6 +401,18 @@ export const CONFIG = {
             category: 'utility',
             // 원자재를 파는 기본 경제 순환은 연구로 막을 이유가 없어서 처음부터 사용 가능하게 둔다.
             // (연구 시스템은 용광로/제련만 심화 콘텐츠로 남겨둠)
+        },
+        auto_construction_depot: {
+            id: 'auto_construction_depot',
+            label: '자동 건설소',
+            shape: 'square',
+            color: '#7c5cff',
+            cost: 250,
+            category: 'utility',
+            requiresTech: 'tech_auto_construction',
+            showDirectionIndicator: false,
+            // 등록한 블루프린트를 정해둔 방향으로 스스로 이어 짓는 건물 (6.10).
+            // 늦게 해금되는 강력한 자동화 콘텐츠라 비용도 다른 utility 건물보다 높다.
         },
         contract_office: {
             id: 'contract_office',

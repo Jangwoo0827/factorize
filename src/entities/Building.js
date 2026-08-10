@@ -55,6 +55,9 @@ export const DIRECTION_VECTORS = [
     { x: 0, y: -1 }, // UP
 ];
 
+/** Direction 값 -> 한글 라벨 (인스펙터/자동 건설소 UI 표시용). */
+export const DIRECTION_LABELS = ['오른쪽', '아래', '왼쪽', '위'];
+
 /**
  * 컨베이어 위 아이템의 실제 픽셀(월드) 좌표를 계산한다.
  * progress 0~0.5 구간은 "진입 가장자리 -> 중심", 0.5~1 구간은
@@ -1213,6 +1216,149 @@ export class ContractOffice extends Building {
     }
 }
 
+/**
+ * 등록해둔 블루프린트(플레이어의 블루프린트 복사 결과와 같은 {dx,dy,typeId,rotation}
+ * 배열)를 정해진 한 방향으로 몇 칸씩 이어 붙여가며 스스로 반복 건설한다.
+ * 방향 하나로만 직선 확장하고, 몇 초에 한 번만 시도하며, 언제든 끌 수 있는
+ * 토글이 있다 - 이 세 가지가 안전장치다 (6.10 설계 참고).
+ * 배치 자체는 플레이어의 블루프린트 붙여넣기(Game#pasteBlueprintAt)와 같은 규칙을
+ * 따른다: 막힌 칸/미해금 건물/자금 부족 칸은 조용히 건너뛰고 나머지만 짓는다.
+ */
+export class AutoConstructionDepot extends Building {
+    /**
+     * @param {number} tileX
+     * @param {number} tileY
+     * @param {number} rotation
+     */
+    constructor(tileX, tileY, rotation) {
+        super(tileX, tileY, 'auto_construction_depot', rotation);
+        /** @type {{dx: number, dy: number, typeId: string, rotation: number}[] | null} */
+        this.blueprint = null;
+        this.blueprintWidth = 1;
+        this.blueprintHeight = 1;
+        this.direction = Direction.RIGHT;
+        this.enabled = false;
+        this.repeatCount = 0;
+        this.timer = 0;
+        /** 직전 시도가 한 칸도 못 지어서 막힌 상태인지 - 엣지 트리거 알림에만 쓴다. */
+        this.blocked = false;
+    }
+
+    /**
+     * 블루프린트를 등록한다. 다음 반복부터는 이 내용을 이어 짓는다.
+     * 새로 등록하면 반복 횟수도 0부터 다시 시작한다(등록소 바로 옆칸부터 다시 짓기 시작).
+     * @param {{dx: number, dy: number, typeId: string, rotation: number}[]} entries
+     */
+    setBlueprint(entries) {
+        this.blueprint = entries;
+        this.repeatCount = 0;
+        this.timer = 0;
+        this.blocked = false;
+        this.blueprintWidth = entries.length === 0 ? 1 : Math.max(...entries.map((e) => e.dx)) + 1;
+        this.blueprintHeight = entries.length === 0 ? 1 : Math.max(...entries.map((e) => e.dy)) + 1;
+    }
+
+    /** 방향을 시계 방향으로 한 단계 돌린다 (RIGHT -> DOWN -> LEFT -> UP -> RIGHT). */
+    cycleDirection() {
+        this.direction = (this.direction + 1) % 4;
+    }
+
+    /** 가동/정지를 토글한다. */
+    toggle() {
+        this.enabled = !this.enabled;
+    }
+
+    /**
+     * @param {number} dt
+     * @param {import('../world/World.js').World} world
+     */
+    update(dt, world) {
+        if (!this.enabled || !this.blueprint || this.blueprint.length === 0) return;
+
+        this.timer += dt;
+        const interval = CONFIG.AUTO_CONSTRUCTION.INTERVAL / this.getSpeedMultiplier();
+        if (this.timer < interval) return;
+        this.timer -= interval;
+
+        const vec = DIRECTION_VECTORS[this.direction];
+        const span = (this.direction === Direction.LEFT || this.direction === Direction.RIGHT)
+            ? this.blueprintWidth
+            : this.blueprintHeight;
+        const anchorX = this.tileX + vec.x * span * (this.repeatCount + 1);
+        const anchorY = this.tileY + vec.y * span * (this.repeatCount + 1);
+
+        let placedAny = false;
+        for (const entry of this.blueprint) {
+            const tileX = anchorX + entry.dx;
+            const tileY = anchorY + entry.dy;
+
+            if (world.isTileOccupied(tileX, tileY)) continue;
+            if (!world.researchSystem.isBuildingUnlocked(entry.typeId)) continue;
+
+            const cost = CONFIG.BUILDINGS[entry.typeId]?.cost ?? 0;
+            if (!world.economy.spendMoney(cost)) continue;
+
+            const building = createBuilding(entry.typeId, tileX, tileY, entry.rotation);
+            world.placeBuilding(tileX, tileY, building);
+            placedAny = true;
+        }
+
+        if (placedAny) {
+            this.repeatCount += 1;
+            if (this.blocked) {
+                this.blocked = false;
+                Logger.info(`자동 건설소가 확장을 재개했습니다 (${this.repeatCount}번째 반복).`);
+            }
+        } else if (!this.blocked) {
+            // 같은 칸에서 계속 실패하는 동안은 반복 횟수를 올리지 않고 재시도만 한다
+            // (repeatCount가 그대로면 다음 시도도 같은 anchor를 다시 확인한다).
+            this.blocked = true;
+            Logger.warn('자동 건설소가 막혔습니다 - 다음 칸에 지을 공간이나 자금이 없습니다.');
+        }
+    }
+
+    isBlocked() {
+        return this.enabled && this.blocked;
+    }
+
+    getInspectorInfo() {
+        const info = super.getInspectorInfo();
+        info.push({ label: '블루프린트', value: this.blueprint ? `등록됨 (건물 ${this.blueprint.length}개)` : '미등록' });
+        info.push({ label: '방향', value: DIRECTION_LABELS[this.direction] });
+        info.push({
+            label: '상태',
+            value: !this.enabled ? '정지됨' : this.blocked ? '막힘' : '작동 중',
+        });
+        info.push({ label: '반복 횟수', value: `${this.repeatCount}회` });
+        return info;
+    }
+
+    serialize() {
+        return {
+            ...super.serialize(),
+            blueprint: this.blueprint,
+            blueprintWidth: this.blueprintWidth,
+            blueprintHeight: this.blueprintHeight,
+            direction: this.direction,
+            enabled: this.enabled,
+            repeatCount: this.repeatCount,
+            timer: this.timer,
+        };
+    }
+
+    restoreState(data) {
+        super.restoreState(data);
+        this.blueprint = data.blueprint ?? null;
+        this.blueprintWidth = data.blueprintWidth ?? 1;
+        this.blueprintHeight = data.blueprintHeight ?? 1;
+        this.direction = data.direction ?? Direction.RIGHT;
+        this.enabled = data.enabled ?? false;
+        this.repeatCount = data.repeatCount ?? 0;
+        this.timer = data.timer ?? 0;
+        this.blocked = false;
+    }
+}
+
 /** 전력망에 고정된 전력을 공급하는 건물 (Phase 5 범위: 연료 없이 항상 최대 출력). */
 export class Generator extends Building {
     /**
@@ -1646,6 +1792,7 @@ const BUILDING_CLASSES = {
     furnace: Furnace,
     seller: Seller,
     contract_office: ContractOffice,
+    auto_construction_depot: AutoConstructionDepot,
     generator: GeneratorT1,
     generator_t2: GeneratorT2,
     generator_t3: GeneratorT3,

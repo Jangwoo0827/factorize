@@ -18,7 +18,7 @@ import { Camera } from './Camera.js';
 import { InputManager } from './InputManager.js';
 import { World } from '../world/World.js';
 import { MinimapRenderer, Renderer } from '../rendering/Renderer.js';
-import { Assembler, createBuilding, Direction, Miner, Storage } from '../entities/Building.js';
+import { Assembler, createBuilding, Direction, DIRECTION_LABELS, Miner, Storage } from '../entities/Building.js';
 import { UIManager, BULLDOZE_TOOL_ID, BLUEPRINT_TOOL_ID, MULTI_SELECT_TOOL_ID } from '../ui/UIManager.js';
 import { SaveManager } from '../save/SaveManager.js';
 import { Logger } from '../utils/Utils.js';
@@ -112,7 +112,14 @@ export class Game {
 
             // 블루프린트/다중 선택 도구를 새로 선택하면 항상 빈 상태로 시작하고,
             // 다른 도구로 바뀌면 진행 중이던 복사/붙여넣기나 선택을 정리한다.
-            this.blueprint = null;
+            // 단, 도구를 완전히 내려놓는 경우(selectedId === null, Escape나 같은
+            // 버튼 재클릭)는 예외로 블루프린트를 지우지 않는다 - 자동 건설소에
+            // 등록하려면 "블루프린트 복사 -> 도구 내려놓기 -> 건설소 클릭해 인스펙터
+            // 열기 -> 등록 버튼" 순서를 거쳐야 하는데, 여기서 지워버리면 등록할
+            // 방법이 없어진다.
+            if (selectedId !== null) {
+                this.blueprint = null;
+            }
             this.selectionDragStart = null;
             this.selectedBuildings = [];
             this.inputManager.setSelectionMode(
@@ -553,6 +560,34 @@ export class Game {
     }
 
     /**
+     * 자동 건설소 인스펙터의 블루프린트 등록/방향 전환/가동 토글 버튼을 처리한다.
+     * @param {import('../entities/Building.js').AutoConstructionDepot} depot
+     * @param {'register-blueprint' | 'cycle-direction' | 'toggle'} action
+     */
+    #handleDepotAction(depot, action) {
+        if (action === 'register-blueprint') {
+            if (!this.blueprint || this.blueprint.length === 0) {
+                Logger.warn('등록할 블루프린트가 없습니다. 블루프린트 도구로 먼저 영역을 복사하세요.');
+                return;
+            }
+            depot.setBlueprint(this.blueprint);
+            Logger.info(`자동 건설소에 블루프린트 등록됨 (건물 ${this.blueprint.length}개)`);
+            return;
+        }
+
+        if (action === 'cycle-direction') {
+            depot.cycleDirection();
+            Logger.info(`자동 건설소 확장 방향: ${DIRECTION_LABELS[depot.direction]}`);
+            return;
+        }
+
+        if (action === 'toggle') {
+            depot.toggle();
+            Logger.info(`자동 건설소 ${depot.enabled ? '가동 시작' : '정지'}`);
+        }
+    }
+
+    /**
      * 저장 버튼 클릭 또는 Ctrl+S 입력을 처리한다. 지금 이어가는 슬롯(activeSlotId)에
      * 덮어쓴다 - 아직 한 번도 저장한 적 없는 새 게임이면(null) 새 슬롯을 만들고,
      * 그 슬롯을 이후 저장도 계속 이어받도록 activeSlotId로 기억해둔다.
@@ -718,6 +753,7 @@ export class Game {
             this.world.economy,
             (selection) => this.#handleUpgradeClick(selection),
             (miners, resourceType) => this.#handleResourceChangeClick(miners, resourceType),
+            (depot, action) => this.#handleDepotAction(depot, action),
         );
         this.buildMenuPanel.updateAffordability(this.world.economy);
         this.productionGraphPanel.update(this.world.stats);

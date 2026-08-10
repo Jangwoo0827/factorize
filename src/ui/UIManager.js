@@ -14,7 +14,7 @@
 import { CONFIG } from '../../config.js';
 import { Logger } from '../utils/Utils.js';
 import { ResourceRegistry } from '../resources/Resources.js';
-import { Miner } from '../entities/Building.js';
+import { AutoConstructionDepot, DIRECTION_LABELS, Miner } from '../entities/Building.js';
 
 /** 해체(철거) 도구를 선택했을 때 사용하는 특수 ID. CONFIG.BUILDINGS의 키와 겹치지 않는다. */
 export const BULLDOZE_TOOL_ID = 'bulldoze';
@@ -367,8 +367,10 @@ export class InspectorPanel {
      * @param {(building: import('../entities/Building.js').Building | import('../entities/Building.js').Building[]) => void} onUpgradeClick
      * @param {(miners: import('../entities/Building.js').Miner[], resourceType: string) => void} [onResourceChange]
      *        다중 선택 중 채굴기가 포함되어 있을 때, 채굴 자원 버튼을 누르면 호출된다.
+     * @param {(depot: import('../entities/Building.js').AutoConstructionDepot, action: 'register-blueprint' | 'cycle-direction' | 'toggle') => void} [onDepotAction]
+     *        자동 건설소를 선택했을 때, 블루프린트 등록/방향 전환/가동 토글 버튼을 누르면 호출된다.
      */
-    update(building, economy, onUpgradeClick, onResourceChange) {
+    update(building, economy, onUpgradeClick, onResourceChange, onDepotAction) {
         if (!building) {
             this.#renderEmpty();
             this.upgradeButtonEl.style.display = 'none';
@@ -400,6 +402,10 @@ export class InspectorPanel {
             rowEl.appendChild(labelEl);
             rowEl.appendChild(valueEl);
             this.bodyEl.appendChild(rowEl);
+        }
+
+        if (building instanceof AutoConstructionDepot && onDepotAction) {
+            this.bodyEl.appendChild(this.#createDepotControlsSection(building, onDepotAction));
         }
 
         if (building.canUpgrade()) {
@@ -537,6 +543,46 @@ export class InspectorPanel {
             buttonsEl.appendChild(btn);
         }
         sectionEl.appendChild(buttonsEl);
+
+        return sectionEl;
+    }
+
+    /**
+     * 자동 건설소를 선택했을 때 보여주는 전용 컨트롤: 현재 들고 있는 블루프린트
+     * 등록, 확장 방향 순환, 가동/정지 토글. 블루프린트가 없으면 가동 버튼은
+     * 비활성화된다 (등록도 안 했는데 켜봐야 아무 일도 안 일어나므로).
+     * @param {import('../entities/Building.js').AutoConstructionDepot} depot
+     * @param {(depot: import('../entities/Building.js').AutoConstructionDepot, action: 'register-blueprint' | 'cycle-direction' | 'toggle') => void} onDepotAction
+     * @returns {HTMLElement}
+     */
+    #createDepotControlsSection(depot, onDepotAction) {
+        const sectionEl = document.createElement('div');
+        sectionEl.className = 'depot-controls-section';
+
+        const registerBtn = document.createElement('button');
+        registerBtn.type = 'button';
+        registerBtn.className = 'depot-action-btn';
+        registerBtn.textContent = depot.blueprint
+            ? `블루프린트 재등록 (현재 ${depot.blueprint.length}개 건물)`
+            : '블루프린트 등록 (먼저 블루프린트 도구로 복사)';
+        registerBtn.addEventListener('click', () => onDepotAction(depot, 'register-blueprint'));
+
+        const directionBtn = document.createElement('button');
+        directionBtn.type = 'button';
+        directionBtn.className = 'depot-action-btn';
+        directionBtn.textContent = `확장 방향: ${DIRECTION_LABELS[depot.direction]} (클릭해서 변경)`;
+        directionBtn.addEventListener('click', () => onDepotAction(depot, 'cycle-direction'));
+
+        const toggleBtn = document.createElement('button');
+        toggleBtn.type = 'button';
+        toggleBtn.className = `depot-action-btn depot-toggle-btn${depot.enabled ? ' is-enabled' : ''}`;
+        toggleBtn.textContent = depot.enabled ? '정지' : '가동';
+        toggleBtn.disabled = !depot.blueprint;
+        toggleBtn.addEventListener('click', () => onDepotAction(depot, 'toggle'));
+
+        sectionEl.appendChild(registerBtn);
+        sectionEl.appendChild(directionBtn);
+        sectionEl.appendChild(toggleBtn);
 
         return sectionEl;
     }
