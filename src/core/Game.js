@@ -18,7 +18,7 @@ import { Camera } from './Camera.js';
 import { InputManager } from './InputManager.js';
 import { World } from '../world/World.js';
 import { MinimapRenderer, Renderer } from '../rendering/Renderer.js';
-import { Assembler, createBuilding, Direction, DIRECTION_LABELS, Miner, Storage } from '../entities/Building.js';
+import { Assembler, AutoConstructionDepot, createBuilding, Direction, DIRECTION_LABELS, Miner, Storage } from '../entities/Building.js';
 import { UIManager, BULLDOZE_TOOL_ID, BLUEPRINT_TOOL_ID, MULTI_SELECT_TOOL_ID } from '../ui/UIManager.js';
 import { SaveManager } from '../save/SaveManager.js';
 import { Logger } from '../utils/Utils.js';
@@ -820,6 +820,13 @@ export class Game {
      *   | {tileX: number, tileY: number, typeId: string, rotation: number, isValid: boolean}[] | null}
      */
     #getPlacementPreview() {
+        // 자동 건설소를 인스펙터로 보고 있는 동안은, 도구 선택과 무관하게 그 건설소의
+        // 다음 반복이 어디에 지어질지 고스트로 보여준다 (설정 확인에 도움이 됨).
+        if (this.inspectedBuilding instanceof AutoConstructionDepot) {
+            const preview = this.inspectedBuilding.previewNextPlacement(this.world);
+            if (preview.length > 0) return preview;
+        }
+
         const selectedId = this.buildMenuPanel.getSelectedId();
         if (!selectedId || selectedId === BULLDOZE_TOOL_ID || selectedId === MULTI_SELECT_TOOL_ID) return null;
 

@@ -157,7 +157,8 @@ export const CONFIG = {
 
     // 자동 건설소: 등록된 블루프린트를 몇 초에 한 번씩 다음 칸에 이어 짓는다.
     AUTO_CONSTRUCTION: {
-        INTERVAL: 4, // 시도 간격(초). 레벨업 시 getSpeedMultiplier()만큼 짧아진다.
+        INTERVAL: 1, // 기본 시도 간격(초, Lv.1 기준).
+        INTERVAL_REDUCTION_PER_LEVEL: 0.3, // 레벨 하나당 이만큼 짧아진다 (Lv.3 기준 0.4초).
     },
 
     // 마일스톤: "누적 수익"과 "초당 수익 최고 기록" 두 사다리. 순서대로 도달한다고

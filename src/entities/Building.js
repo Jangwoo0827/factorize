@@ -1269,6 +1269,46 @@ export class AutoConstructionDepot extends Building {
     }
 
     /**
+     * 다음 반복이 (this.tileX, this.tileY) 기준 어디에 앵커될지 계산한다.
+     * update()의 실제 배치와 previewNextPlacement()의 고스트 미리보기가
+     * 같은 계산을 공유한다.
+     * @returns {{x: number, y: number}}
+     */
+    #computeNextAnchor() {
+        const vec = DIRECTION_VECTORS[this.direction];
+        const span = (this.direction === Direction.LEFT || this.direction === Direction.RIGHT)
+            ? this.blueprintWidth
+            : this.blueprintHeight;
+        return {
+            x: this.tileX + vec.x * span * (this.repeatCount + 1),
+            y: this.tileY + vec.y * span * (this.repeatCount + 1),
+        };
+    }
+
+    /**
+     * 다음 반복이 어디에, 무엇이 지어질지 미리 계산한다 (실제로 짓지는 않음).
+     * Game이 이 건설소를 인스펙터로 보고 있는 동안 고스트로 그려준다.
+     * @param {import('../world/World.js').World} world
+     * @returns {{tileX: number, tileY: number, typeId: string, rotation: number, isValid: boolean}[]}
+     */
+    previewNextPlacement(world) {
+        if (!this.blueprint || this.blueprint.length === 0) return [];
+
+        const anchor = this.#computeNextAnchor();
+        return this.blueprint.map((entry) => {
+            const tileX = anchor.x + entry.dx;
+            const tileY = anchor.y + entry.dy;
+            return {
+                tileX,
+                tileY,
+                typeId: entry.typeId,
+                rotation: entry.rotation,
+                isValid: !world.isTileOccupied(tileX, tileY) && world.researchSystem.isBuildingUnlocked(entry.typeId),
+            };
+        });
+    }
+
+    /**
      * @param {number} dt
      * @param {import('../world/World.js').World} world
      */
@@ -1276,16 +1316,14 @@ export class AutoConstructionDepot extends Building {
         if (!this.enabled || !this.blueprint || this.blueprint.length === 0) return;
 
         this.timer += dt;
-        const interval = CONFIG.AUTO_CONSTRUCTION.INTERVAL / this.getSpeedMultiplier();
+        const interval = CONFIG.AUTO_CONSTRUCTION.INTERVAL
+            - (this.level - 1) * CONFIG.AUTO_CONSTRUCTION.INTERVAL_REDUCTION_PER_LEVEL;
         if (this.timer < interval) return;
         this.timer -= interval;
 
-        const vec = DIRECTION_VECTORS[this.direction];
-        const span = (this.direction === Direction.LEFT || this.direction === Direction.RIGHT)
-            ? this.blueprintWidth
-            : this.blueprintHeight;
-        const anchorX = this.tileX + vec.x * span * (this.repeatCount + 1);
-        const anchorY = this.tileY + vec.y * span * (this.repeatCount + 1);
+        const anchor = this.#computeNextAnchor();
+        const anchorX = anchor.x;
+        const anchorY = anchor.y;
 
         let placedAny = false;
         for (const entry of this.blueprint) {
