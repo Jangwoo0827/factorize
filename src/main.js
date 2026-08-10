@@ -110,6 +110,12 @@ function bootstrap() {
             if (slotId) {
                 await game.saveManager.loadFromSlot(slotId);
                 game.activeSlotId = slotId;
+                // Game 생성 시점엔 아직 연구 상태가 없는 새 World로 건물 패널을
+                // 만들어뒀으므로, 불러온 연구 상태를 반영해 잠금 여부를 다시 계산한다
+                // (게임 중 "불러오기" 버튼을 쓸 때의 #handleLoadSlot과 동일한 처리 -
+                // 이걸 빠뜨리면 처음 불러왔을 때만 건물이 하나도 해금 안 된 것처럼
+                // 보이다가, 게임 중 한 번 더 불러와야 정상으로 보이는 문제가 있었다).
+                game.buildMenuPanel.rebuild();
             }
 
             game.start();
