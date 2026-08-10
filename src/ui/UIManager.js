@@ -347,12 +347,47 @@ export class InspectorPanel {
         this.bodyEl = document.createElement('div');
         this.bodyEl.className = 'inspector-body';
 
+        // 아래 두 섹션(다중 선택 자원 버튼 / 자동 건설소 컨트롤)의 버튼들은
+        // upgradeButtonEl과 마찬가지로 "한 번만 만들고 매 프레임 텍스트/상태만
+        // 갱신"하는 방식이어야 한다. update()가 매 프레임(rAF) 호출되는데, 버튼을
+        // 매번 새로 만들어 bodyEl에 갈아 끼우면 사용자가 마우스를 누르고 떼는
+        // 사이에 눌렀던 버튼 DOM이 통째로 교체되어 클릭이 씹히는 문제가 있었다.
+        this.multiResourceSectionEl = document.createElement('div');
+        this.multiResourceSectionEl.className = 'multi-resource-section';
+        this.multiResourceLabelEl = document.createElement('div');
+        this.multiResourceLabelEl.className = 'multi-resource-label';
+        this.multiResourceButtonsEl = document.createElement('div');
+        this.multiResourceButtonsEl.className = 'multi-resource-buttons';
+        this.multiResourceSectionEl.appendChild(this.multiResourceLabelEl);
+        this.multiResourceSectionEl.appendChild(this.multiResourceButtonsEl);
+        this.multiResourceSectionEl.style.display = 'none';
+        /** @type {HTMLButtonElement[]} 자원 버튼은 선택된 채굴기 등급에 따라 개수가 바뀌므로 풀로 재사용한다 */
+        this.multiResourceButtonPool = [];
+
+        this.depotSectionEl = document.createElement('div');
+        this.depotSectionEl.className = 'depot-controls-section';
+        this.depotRegisterBtnEl = document.createElement('button');
+        this.depotRegisterBtnEl.type = 'button';
+        this.depotRegisterBtnEl.className = 'depot-action-btn';
+        this.depotDirectionBtnEl = document.createElement('button');
+        this.depotDirectionBtnEl.type = 'button';
+        this.depotDirectionBtnEl.className = 'depot-action-btn';
+        this.depotToggleBtnEl = document.createElement('button');
+        this.depotToggleBtnEl.type = 'button';
+        this.depotToggleBtnEl.className = 'depot-action-btn depot-toggle-btn';
+        this.depotSectionEl.appendChild(this.depotRegisterBtnEl);
+        this.depotSectionEl.appendChild(this.depotDirectionBtnEl);
+        this.depotSectionEl.appendChild(this.depotToggleBtnEl);
+        this.depotSectionEl.style.display = 'none';
+
         this.upgradeButtonEl = document.createElement('button');
         this.upgradeButtonEl.type = 'button';
         this.upgradeButtonEl.className = 'upgrade-btn';
 
         this.containerEl.appendChild(this.titleEl);
         this.containerEl.appendChild(this.bodyEl);
+        this.containerEl.appendChild(this.multiResourceSectionEl);
+        this.containerEl.appendChild(this.depotSectionEl);
         this.containerEl.appendChild(this.upgradeButtonEl);
 
         this.upgradeButtonEl.style.display = 'none';
@@ -374,13 +409,18 @@ export class InspectorPanel {
         if (!building) {
             this.#renderEmpty();
             this.upgradeButtonEl.style.display = 'none';
+            this.depotSectionEl.style.display = 'none';
+            this.multiResourceSectionEl.style.display = 'none';
             return;
         }
 
         if (Array.isArray(building)) {
+            this.depotSectionEl.style.display = 'none';
             this.#renderMultiSelection(building, economy, onUpgradeClick, onResourceChange);
             return;
         }
+
+        this.multiResourceSectionEl.style.display = 'none';
 
         const info = building.getInspectorInfo();
 
@@ -405,7 +445,10 @@ export class InspectorPanel {
         }
 
         if (building instanceof AutoConstructionDepot && onDepotAction) {
-            this.bodyEl.appendChild(this.#createDepotControlsSection(building, onDepotAction));
+            this.#updateDepotControls(building, onDepotAction);
+            this.depotSectionEl.style.display = '';
+        } else {
+            this.depotSectionEl.style.display = 'none';
         }
 
         if (building.canUpgrade()) {
@@ -485,7 +528,10 @@ export class InspectorPanel {
 
         const miners = buildings.filter((b) => b instanceof Miner);
         if (miners.length > 0 && onResourceChange) {
-            this.bodyEl.appendChild(this.#createMinerResourceSection(miners, onResourceChange));
+            this.#updateMinerResourceSection(miners, onResourceChange);
+            this.multiResourceSectionEl.style.display = '';
+        } else {
+            this.multiResourceSectionEl.style.display = 'none';
         }
 
         const upgradable = buildings.filter((b) => b.canUpgrade());
@@ -510,81 +556,62 @@ export class InspectorPanel {
      * 자원(등급이 섞여 있으면 그 교집합 - 하위 등급이 캘 수 있는 자원은
      * 상위 등급도 항상 캘 수 있으므로, 교집합은 곧 가장 낮은 등급의 목록과 같다)을
      * 버튼으로 늘어놓는다. 버튼을 누르면 선택된 채굴기 전부가 그 자원으로 즉시 바뀐다.
+     * 버튼 자체는 풀에서 재사용하고(개수만 필요한 만큼 늘리고 남는 건 숨김)
+     * 텍스트/색/클릭 핸들러만 매 프레임 갱신한다 - 매번 새로 만들면 클릭이 씹힌다.
      * @param {import('../entities/Building.js').Miner[]} miners
      * @param {(miners: import('../entities/Building.js').Miner[], resourceType: string) => void} onResourceChange
-     * @returns {HTMLElement}
      */
-    #createMinerResourceSection(miners, onResourceChange) {
-        const sectionEl = document.createElement('div');
-        sectionEl.className = 'multi-resource-section';
-
-        const labelEl = document.createElement('div');
-        labelEl.className = 'multi-resource-label';
-        labelEl.textContent = `채굴 자원 일괄 변경 (채굴기 ${miners.length}개)`;
-        sectionEl.appendChild(labelEl);
+    #updateMinerResourceSection(miners, onResourceChange) {
+        this.multiResourceLabelEl.textContent = `채굴 자원 일괄 변경 (채굴기 ${miners.length}개)`;
 
         const sharedResources = miners.reduce((intersection, miner) => {
             const list = miner.definition.selectableResources ?? [miner.definition.producesResource];
             return intersection.filter((resourceType) => list.includes(resourceType));
         }, miners[0].definition.selectableResources ?? [miners[0].definition.producesResource]);
 
-        const buttonsEl = document.createElement('div');
-        buttonsEl.className = 'multi-resource-buttons';
-        for (const resourceType of sharedResources) {
-            const def = ResourceRegistry.getDefinition(resourceType);
-
+        while (this.multiResourceButtonPool.length < sharedResources.length) {
             const btn = document.createElement('button');
             btn.type = 'button';
             btn.className = 'multi-resource-btn';
+            this.multiResourceButtonsEl.appendChild(btn);
+            this.multiResourceButtonPool.push(btn);
+        }
+
+        sharedResources.forEach((resourceType, i) => {
+            const def = ResourceRegistry.getDefinition(resourceType);
+            const btn = this.multiResourceButtonPool[i];
             btn.style.setProperty('--accent-color', def?.color ?? CONFIG.RENDER.ACCENT_CYAN);
             btn.textContent = def?.label ?? resourceType;
-            btn.addEventListener('click', () => onResourceChange(miners, resourceType));
+            btn.onclick = () => onResourceChange(miners, resourceType);
+            btn.style.display = '';
+        });
 
-            buttonsEl.appendChild(btn);
+        for (let i = sharedResources.length; i < this.multiResourceButtonPool.length; i++) {
+            this.multiResourceButtonPool[i].style.display = 'none';
         }
-        sectionEl.appendChild(buttonsEl);
-
-        return sectionEl;
     }
 
     /**
-     * 자동 건설소를 선택했을 때 보여주는 전용 컨트롤: 현재 들고 있는 블루프린트
-     * 등록, 확장 방향 순환, 가동/정지 토글. 블루프린트가 없으면 가동 버튼은
-     * 비활성화된다 (등록도 안 했는데 켜봐야 아무 일도 안 일어나므로).
+     * 자동 건설소를 선택했을 때 보여주는 전용 컨트롤: 블루프린트 등록(드래그로
+     * 영역 지정), 확장 방향 순환, 가동/정지 토글. 블루프린트가 없으면 가동
+     * 버튼은 비활성화된다. 버튼은 생성자에서 한 번만 만든 걸 재사용하고
+     * 텍스트/상태만 갱신한다(위 자원 버튼과 같은 이유 - 클릭 씹힘 방지).
      * @param {import('../entities/Building.js').AutoConstructionDepot} depot
      * @param {(depot: import('../entities/Building.js').AutoConstructionDepot, action: 'register-blueprint' | 'cycle-direction' | 'toggle') => void} onDepotAction
-     * @returns {HTMLElement}
      */
-    #createDepotControlsSection(depot, onDepotAction) {
-        const sectionEl = document.createElement('div');
-        sectionEl.className = 'depot-controls-section';
+    #updateDepotControls(depot, onDepotAction) {
+        this.depotRegisterBtnEl.textContent = depot.blueprint
+            ? `블루프린트 재등록 (현재 ${depot.blueprint.length}개 건물, 클릭 후 영역 드래그)`
+            : '블루프린트 등록 (클릭 후 영역 드래그)';
+        this.depotRegisterBtnEl.onclick = () => onDepotAction(depot, 'register-blueprint');
 
-        const registerBtn = document.createElement('button');
-        registerBtn.type = 'button';
-        registerBtn.className = 'depot-action-btn';
-        registerBtn.textContent = depot.blueprint
-            ? `블루프린트 재등록 (현재 ${depot.blueprint.length}개 건물)`
-            : '블루프린트 등록 (먼저 블루프린트 도구로 복사)';
-        registerBtn.addEventListener('click', () => onDepotAction(depot, 'register-blueprint'));
+        this.depotDirectionBtnEl.textContent = `확장 방향: ${DIRECTION_LABELS[depot.direction]} (클릭해서 변경)`;
+        this.depotDirectionBtnEl.onclick = () => onDepotAction(depot, 'cycle-direction');
 
-        const directionBtn = document.createElement('button');
-        directionBtn.type = 'button';
-        directionBtn.className = 'depot-action-btn';
-        directionBtn.textContent = `확장 방향: ${DIRECTION_LABELS[depot.direction]} (클릭해서 변경)`;
-        directionBtn.addEventListener('click', () => onDepotAction(depot, 'cycle-direction'));
-
-        const toggleBtn = document.createElement('button');
-        toggleBtn.type = 'button';
-        toggleBtn.className = `depot-action-btn depot-toggle-btn${depot.enabled ? ' is-enabled' : ''}`;
-        toggleBtn.textContent = depot.enabled ? '정지' : '가동';
-        toggleBtn.disabled = !depot.blueprint;
-        toggleBtn.addEventListener('click', () => onDepotAction(depot, 'toggle'));
-
-        sectionEl.appendChild(registerBtn);
-        sectionEl.appendChild(directionBtn);
-        sectionEl.appendChild(toggleBtn);
-
-        return sectionEl;
+        this.depotToggleBtnEl.textContent = depot.enabled ? '정지' : '가동';
+        this.depotToggleBtnEl.disabled = !depot.blueprint;
+        this.depotToggleBtnEl.classList.toggle('is-enabled', depot.enabled);
+        this.depotToggleBtnEl.onclick = () => onDepotAction(depot, 'toggle');
     }
 }
 

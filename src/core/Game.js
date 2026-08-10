@@ -103,8 +103,14 @@ export class Game {
         // 복사하는 중"이고, 값이 있으면 "커서를 따라다니며 붙여넣기를 기다리는 중"이다.
         /** @type {{dx: number, dy: number, typeId: string, rotation: number}[] | null} */
         this.blueprint = null;
-        /** @type {{tileX: number, tileY: number} | null} 드래그 시작 지점 (블루프린트/다중 선택 드래그 중에만 값이 있음) */
+        /** @type {{tileX: number, tileY: number} | null} 드래그 시작 지점 (블루프린트/다중 선택/건설소 등록 드래그 중에만 값이 있음) */
         this.selectionDragStart = null;
+
+        // 자동 건설소 인스펙터의 "블루프린트 등록" 버튼을 누른 직후부터, 그 다음
+        // 드래그 한 번이 끝날 때까지만 값이 있다. 값이 있는 동안은 도구와 무관하게
+        // 드래그가 이 건설소로 바로 등록될 영역을 지정하는 데 쓰인다.
+        /** @type {import('../entities/Building.js').AutoConstructionDepot | null} */
+        this.depotRegistrationTarget = null;
 
         this.buildMenuPanel = this.uiManager.initBuildMenu(uiElements.buildMenu, uiElements.buildMenuToggle, (selectedId) => {
             // 도구를 바꾸면 이전에 돌려둔 방향은 초기화하는 편이 직관적이다.
@@ -113,12 +119,13 @@ export class Game {
             // 블루프린트/다중 선택 도구를 새로 선택하면 항상 빈 상태로 시작하고,
             // 다른 도구로 바뀌면 진행 중이던 복사/붙여넣기나 선택을 정리한다.
             // 단, 도구를 완전히 내려놓는 경우(selectedId === null, Escape나 같은
-            // 버튼 재클릭)는 예외로 블루프린트를 지우지 않는다 - 자동 건설소에
-            // 등록하려면 "블루프린트 복사 -> 도구 내려놓기 -> 건설소 클릭해 인스펙터
-            // 열기 -> 등록 버튼" 순서를 거쳐야 하는데, 여기서 지워버리면 등록할
-            // 방법이 없어진다.
+            // 버튼 재클릭)는 예외로 블루프린트를 지우지 않는다 - 붙여넣기용으로
+            // 복사해둔 걸 인스펙터를 열어보는 동안에도 들고 있을 수 있게 해준다.
             if (selectedId !== null) {
                 this.blueprint = null;
+                // 등록 대기 중에 다른 배치 도구로 바꾸면 드래그가 원래 도구의 의미로
+                // 되돌아가야 하므로, 대기 중이던 건설소 등록은 조용히 취소한다.
+                this.depotRegistrationTarget = null;
             }
             this.selectionDragStart = null;
             this.selectedBuildings = [];
@@ -312,9 +319,10 @@ export class Game {
     }
 
     /**
-     * 드래그로 영역 선택이 끝났을 때 호출된다. 어떤 도구가 선택되어 있었는지에
-     * 따라 블루프린트 캡처, 다중 선택(일괄 업그레이드용), 해체(일괄 철거) 중
-     * 하나로 처리한다.
+     * 드래그로 영역 선택이 끝났을 때 호출된다. 자동 건설소 등록 대기 중이면
+     * 무슨 도구가 선택되어 있든 그 영역을 바로 그 건설소에 등록하고, 아니면
+     * 어떤 도구가 선택되어 있었는지에 따라 블루프린트 캡처, 다중 선택(일괄
+     * 업그레이드용), 해체(일괄 철거) 중 하나로 처리한다.
      */
     #handleSelectionEnd() {
         const start = this.selectionDragStart;
@@ -322,6 +330,21 @@ export class Game {
         this.selectionDragStart = null;
 
         if (!start || !end) return;
+
+        if (this.depotRegistrationTarget) {
+            const depot = this.depotRegistrationTarget;
+            this.depotRegistrationTarget = null;
+            this.#restoreSelectionModeForCurrentTool();
+
+            const entries = this.#captureBlueprint(start, end);
+            if (entries.length === 0) {
+                Logger.warn('선택한 영역에 건물이 없습니다.');
+                return;
+            }
+            depot.setBlueprint(entries);
+            Logger.info(`자동 건설소에 블루프린트 등록됨 (건물 ${entries.length}개)`);
+            return;
+        }
 
         const selectedId = this.buildMenuPanel.getSelectedId();
 
@@ -355,17 +378,37 @@ export class Game {
     }
 
     /**
-     * 드래그 없이 클릭만 했을 때(영역 선택 취소) 호출된다. 해체 도구라면 클릭한
-     * 타일 하나만 철거하고, 그 외 도구(블루프린트/다중 선택)는 캡처할 게 없으므로
-     * 아무 동작도 하지 않는다.
+     * 드래그 없이 클릭만 했을 때(영역 선택 취소) 호출된다. 건설소 등록 대기
+     * 중이었다면 그 대기를 취소하고, 해체 도구라면 클릭한 타일 하나만 철거하며,
+     * 그 외 도구(블루프린트/다중 선택)는 캡처할 게 없으므로 아무 동작도 하지 않는다.
      */
     #handleSelectionCancel() {
         const start = this.selectionDragStart;
         this.selectionDragStart = null;
 
+        if (this.depotRegistrationTarget) {
+            this.depotRegistrationTarget = null;
+            this.#restoreSelectionModeForCurrentTool();
+            Logger.warn('자동 건설소 블루프린트 등록이 취소되었습니다.');
+            return;
+        }
+
         if (start && this.buildMenuPanel.getSelectedId() === BULLDOZE_TOOL_ID) {
             this.#removeBuildingAt(start.tileX, start.tileY);
         }
+    }
+
+    /**
+     * 현재 빌드 메뉴에서 선택된 도구를 기준으로 드래그 선택 모드를 다시 계산해
+     * InputManager에 반영한다. 건설소 블루프린트 등록 드래그가 끝나거나
+     * 취소된 직후, 원래 선택돼 있던 도구의 드래그 의미(팬/영역 선택)로 되돌리는
+     * 용도로만 쓴다.
+     */
+    #restoreSelectionModeForCurrentTool() {
+        const selectedId = this.buildMenuPanel.getSelectedId();
+        this.inputManager.setSelectionMode(
+            selectedId === BLUEPRINT_TOOL_ID || selectedId === MULTI_SELECT_TOOL_ID || selectedId === BULLDOZE_TOOL_ID,
+        );
     }
 
     /**
@@ -566,12 +609,12 @@ export class Game {
      */
     #handleDepotAction(depot, action) {
         if (action === 'register-blueprint') {
-            if (!this.blueprint || this.blueprint.length === 0) {
-                Logger.warn('등록할 블루프린트가 없습니다. 블루프린트 도구로 먼저 영역을 복사하세요.');
-                return;
-            }
-            depot.setBlueprint(this.blueprint);
-            Logger.info(`자동 건설소에 블루프린트 등록됨 (건물 ${this.blueprint.length}개)`);
+            // 별도로 블루프린트를 미리 복사해둘 필요 없이, 버튼을 누르면 바로 드래그
+            // 모드로 들어간다 - 지금 선택된 도구와 무관하게 다음 드래그 한 번을
+            // 가로채서 이 건설소에 바로 등록한다 (#handleSelectionEnd 참고).
+            this.depotRegistrationTarget = depot;
+            this.inputManager.setSelectionMode(true);
+            Logger.info('자동 건설소: 등록할 영역을 드래그하세요.');
             return;
         }
 
