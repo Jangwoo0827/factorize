@@ -1219,10 +1219,10 @@ export class ContractOffice extends Building {
 /**
  * 등록해둔 블루프린트(플레이어의 블루프린트 복사 결과와 같은 {dx,dy,typeId,rotation}
  * 배열)를 정해진 한 방향으로 몇 칸씩 이어 붙여가며 스스로 반복 건설한다.
+ * 한 번에 전부 찍어내지 않고 블록 하나씩 순서대로 짓는다 - 블루프린트에
+ * 10개가 있으면 10번의 시도(기본 1초 간격)에 걸쳐 한 세트가 완성된다.
  * 방향 하나로만 직선 확장하고, 몇 초에 한 번만 시도하며, 언제든 끌 수 있는
  * 토글이 있다 - 이 세 가지가 안전장치다 (6.10 설계 참고).
- * 배치 자체는 플레이어의 블루프린트 붙여넣기(Game#pasteBlueprintAt)와 같은 규칙을
- * 따른다: 막힌 칸/미해금 건물/자금 부족 칸은 조용히 건너뛰고 나머지만 짓는다.
  */
 export class AutoConstructionDepot extends Building {
     /**
@@ -1238,20 +1238,24 @@ export class AutoConstructionDepot extends Building {
         this.blueprintHeight = 1;
         this.direction = Direction.RIGHT;
         this.enabled = false;
+        /** 완성한 반복(블루프린트 한 세트) 횟수. */
         this.repeatCount = 0;
+        /** 지금 짓고 있는 반복 안에서, 다음에 시도할 블록의 blueprint 배열 인덱스. */
+        this.blockIndex = 0;
         this.timer = 0;
-        /** 직전 시도가 한 칸도 못 지어서 막힌 상태인지 - 엣지 트리거 알림에만 쓴다. */
+        /** 직전 시도가 못 지어서 막힌 상태인지 - 엣지 트리거 알림에만 쓴다. */
         this.blocked = false;
     }
 
     /**
      * 블루프린트를 등록한다. 다음 반복부터는 이 내용을 이어 짓는다.
-     * 새로 등록하면 반복 횟수도 0부터 다시 시작한다(등록소 바로 옆칸부터 다시 짓기 시작).
+     * 새로 등록하면 반복/블록 진행도도 0부터 다시 시작한다.
      * @param {{dx: number, dy: number, typeId: string, rotation: number}[]} entries
      */
     setBlueprint(entries) {
         this.blueprint = entries;
         this.repeatCount = 0;
+        this.blockIndex = 0;
         this.timer = 0;
         this.blocked = false;
         this.blueprintWidth = entries.length === 0 ? 1 : Math.max(...entries.map((e) => e.dx)) + 1;
@@ -1269,12 +1273,12 @@ export class AutoConstructionDepot extends Building {
     }
 
     /**
-     * 다음 반복이 (this.tileX, this.tileY) 기준 어디에 앵커될지 계산한다.
+     * 지금 짓고 있는 반복이 (this.tileX, this.tileY) 기준 어디에 앵커될지 계산한다.
      * update()의 실제 배치와 previewNextPlacement()의 고스트 미리보기가
      * 같은 계산을 공유한다.
      * @returns {{x: number, y: number}}
      */
-    #computeNextAnchor() {
+    #computeCurrentAnchor() {
         const vec = DIRECTION_VECTORS[this.direction];
         const span = (this.direction === Direction.LEFT || this.direction === Direction.RIGHT)
             ? this.blueprintWidth
@@ -1286,16 +1290,17 @@ export class AutoConstructionDepot extends Building {
     }
 
     /**
-     * 다음 반복이 어디에, 무엇이 지어질지 미리 계산한다 (실제로 짓지는 않음).
-     * Game이 이 건설소를 인스펙터로 보고 있는 동안 고스트로 그려준다.
+     * 지금 짓고 있는 반복 중 아직 안 지은 블록들이 어디에, 무엇이 지어질지
+     * 미리 계산한다 (실제로 짓지는 않음). Game이 이 건설소를 인스펙터로 보고
+     * 있는 동안 고스트로 그려준다.
      * @param {import('../world/World.js').World} world
      * @returns {{tileX: number, tileY: number, typeId: string, rotation: number, isValid: boolean}[]}
      */
     previewNextPlacement(world) {
         if (!this.blueprint || this.blueprint.length === 0) return [];
 
-        const anchor = this.#computeNextAnchor();
-        return this.blueprint.map((entry) => {
+        const anchor = this.#computeCurrentAnchor();
+        return this.blueprint.slice(this.blockIndex).map((entry) => {
             const tileX = anchor.x + entry.dx;
             const tileY = anchor.y + entry.dy;
             return {
@@ -1321,35 +1326,34 @@ export class AutoConstructionDepot extends Building {
         if (this.timer < interval) return;
         this.timer -= interval;
 
-        const anchor = this.#computeNextAnchor();
-        const anchorX = anchor.x;
-        const anchorY = anchor.y;
+        const anchor = this.#computeCurrentAnchor();
+        const entry = this.blueprint[this.blockIndex];
+        const tileX = anchor.x + entry.dx;
+        const tileY = anchor.y + entry.dy;
 
-        let placedAny = false;
-        for (const entry of this.blueprint) {
-            const tileX = anchorX + entry.dx;
-            const tileY = anchorY + entry.dy;
-
-            if (world.isTileOccupied(tileX, tileY)) continue;
-            if (!world.researchSystem.isBuildingUnlocked(entry.typeId)) continue;
-
+        let placed = false;
+        if (!world.isTileOccupied(tileX, tileY) && world.researchSystem.isBuildingUnlocked(entry.typeId)) {
             const cost = CONFIG.BUILDINGS[entry.typeId]?.cost ?? 0;
-            if (!world.economy.spendMoney(cost)) continue;
-
-            const building = createBuilding(entry.typeId, tileX, tileY, entry.rotation);
-            world.placeBuilding(tileX, tileY, building);
-            placedAny = true;
+            if (world.economy.spendMoney(cost)) {
+                const building = createBuilding(entry.typeId, tileX, tileY, entry.rotation);
+                world.placeBuilding(tileX, tileY, building);
+                placed = true;
+            }
         }
 
-        if (placedAny) {
-            this.repeatCount += 1;
+        if (placed) {
+            this.blockIndex += 1;
+            if (this.blockIndex >= this.blueprint.length) {
+                this.blockIndex = 0;
+                this.repeatCount += 1;
+            }
             if (this.blocked) {
                 this.blocked = false;
-                Logger.info(`자동 건설소가 확장을 재개했습니다 (${this.repeatCount}번째 반복).`);
+                Logger.info('자동 건설소가 다시 짓기 시작했습니다.');
             }
         } else if (!this.blocked) {
-            // 같은 칸에서 계속 실패하는 동안은 반복 횟수를 올리지 않고 재시도만 한다
-            // (repeatCount가 그대로면 다음 시도도 같은 anchor를 다시 확인한다).
+            // 같은 블록에서 계속 실패하는 동안은 blockIndex를 올리지 않고 재시도만
+            // 한다 (건너뛰지 않음 - 순서대로 한 칸씩 짓는다는 규칙을 지킨다).
             this.blocked = true;
             Logger.warn('자동 건설소가 막혔습니다 - 다음 칸에 지을 공간이나 자금이 없습니다.');
         }
@@ -1361,13 +1365,19 @@ export class AutoConstructionDepot extends Building {
 
     getInspectorInfo() {
         const info = super.getInspectorInfo();
-        info.push({ label: '블루프린트', value: this.blueprint ? `등록됨 (건물 ${this.blueprint.length}개)` : '미등록' });
+        info.push({
+            label: '블루프린트',
+            value: this.blueprint ? `등록됨 (블록 ${this.blueprint.length}개)` : '미등록',
+        });
         info.push({ label: '방향', value: DIRECTION_LABELS[this.direction] });
         info.push({
             label: '상태',
             value: !this.enabled ? '정지됨' : this.blocked ? '막힘' : '작동 중',
         });
-        info.push({ label: '반복 횟수', value: `${this.repeatCount}회` });
+        if (this.blueprint && this.blueprint.length > 0) {
+            info.push({ label: '이번 반복 진행', value: `${this.blockIndex}/${this.blueprint.length}블록` });
+        }
+        info.push({ label: '완성한 반복', value: `${this.repeatCount}회` });
         return info;
     }
 
@@ -1380,6 +1390,7 @@ export class AutoConstructionDepot extends Building {
             direction: this.direction,
             enabled: this.enabled,
             repeatCount: this.repeatCount,
+            blockIndex: this.blockIndex,
             timer: this.timer,
         };
     }
@@ -1392,6 +1403,7 @@ export class AutoConstructionDepot extends Building {
         this.direction = data.direction ?? Direction.RIGHT;
         this.enabled = data.enabled ?? false;
         this.repeatCount = data.repeatCount ?? 0;
+        this.blockIndex = data.blockIndex ?? 0;
         this.timer = data.timer ?? 0;
         this.blocked = false;
     }
