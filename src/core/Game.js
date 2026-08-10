@@ -115,7 +115,9 @@ export class Game {
             this.blueprint = null;
             this.selectionDragStart = null;
             this.selectedBuildings = [];
-            this.inputManager.setSelectionMode(selectedId === BLUEPRINT_TOOL_ID || selectedId === MULTI_SELECT_TOOL_ID);
+            this.inputManager.setSelectionMode(
+                selectedId === BLUEPRINT_TOOL_ID || selectedId === MULTI_SELECT_TOOL_ID || selectedId === BULLDOZE_TOOL_ID,
+            );
         }, this.world.researchSystem);
 
         this.researchBarPanel = this.uiManager.initResearchBar(uiElements.researchBar, (techId) => {
@@ -179,8 +181,9 @@ export class Game {
     }
 
     /**
-     * 좌클릭(드래그가 아닌 순수 클릭) 처리.
-     * - 해체 도구가 선택되어 있으면 철거한다.
+     * 좌클릭(드래그가 아닌 순수 클릭) 처리. 해체 도구는 이제 항상 드래그 선택
+     * 모드로 처리되므로(#handleSelectionCancel/#handleSelectionEnd) 여기서는
+     * 다루지 않는다.
      * - 아무 도구도 선택되어 있지 않으면, 클릭한 타일의 건물을 정보 패널에 표시한다.
      * - 건물이 선택되어 있으면 배치한다.
      * @param {number} tileX
@@ -191,11 +194,6 @@ export class Game {
 
         if (selectedId === BLUEPRINT_TOOL_ID && this.blueprint) {
             this.#pasteBlueprintAt(tileX, tileY);
-            return;
-        }
-
-        if (selectedId === BULLDOZE_TOOL_ID) {
-            this.#removeBuildingAt(tileX, tileY);
             return;
         }
 
@@ -237,30 +235,65 @@ export class Game {
     }
 
     /**
-     * 실제 건물 판매를 수행하는 공통 로직. 좌클릭(해체 도구)/우클릭 양쪽에서 호출된다.
-     * 철거 대상이 현재 정보 패널에 표시 중이던 건물이면 패널도 함께 비운다.
-     * @param {number} tileX
-     * @param {number} tileY
+     * 건물 한 채를 실제로 철거/판매하는 조용한(로그 없는) 공통 로직. 단일 철거와
+     * 드래그 다중 철거가 이 위에서 로그 문구만 다르게 붙여 재사용한다. 철거
+     * 대상이 현재 정보 패널에 표시 중이던 건물이면 패널도 함께 비운다.
+     * @param {import('../entities/Building.js').Building} building
+     * @returns {number} 환급된 금액 (철거 실패 시 0)
      */
-    #removeBuildingAt(tileX, tileY) {
-        const targetBuilding = this.world.getBuildingAt(tileX, tileY);
-        const removed = this.world.removeBuilding(tileX, tileY);
+    #sellBuilding(building) {
+        const removed = this.world.removeBuilding(building.tileX, building.tileY);
+        if (!removed) return 0;
 
-        if (!removed) return;
-
-        const originalCost = targetBuilding.definition?.cost ?? 0;
+        const originalCost = building.definition?.cost ?? 0;
         const refund = Math.floor(originalCost * CONFIG.ECONOMY.BUILDING_SELL_RATE);
         if (refund > 0) {
             this.world.economy.addMoney(refund);
         }
 
-        if (this.inspectedBuilding === targetBuilding) {
+        if (this.inspectedBuilding === building) {
             this.inspectedBuilding = null;
         }
-        if (this.selectedBuildings.includes(targetBuilding)) {
-            this.selectedBuildings = this.selectedBuildings.filter((b) => b !== targetBuilding);
+        if (this.selectedBuildings.includes(building)) {
+            this.selectedBuildings = this.selectedBuildings.filter((b) => b !== building);
         }
-        Logger.info(`${targetBuilding.definition?.label ?? targetBuilding.typeId} 판매됨 (+${refund}원)`);
+        return refund;
+    }
+
+    /**
+     * 타일 하나를 철거한다. 우클릭(도구 무관)과 해체 도구의 단일 클릭(드래그 없음)
+     * 양쪽에서 호출된다.
+     * @param {number} tileX
+     * @param {number} tileY
+     */
+    #removeBuildingAt(tileX, tileY) {
+        const targetBuilding = this.world.getBuildingAt(tileX, tileY);
+        if (!targetBuilding) return;
+
+        const label = targetBuilding.definition?.label ?? targetBuilding.typeId;
+        const refund = this.#sellBuilding(targetBuilding);
+        Logger.info(`${label} 판매됨 (+${refund}원)`);
+    }
+
+    /**
+     * 해체 도구로 드래그한 사각형 영역 안의 건물을 한 번에 철거한다.
+     * 개별 로그 대신 요약 로그 한 줄만 남겨, 큰 영역을 지워도 MiniLog가
+     * 도배되지 않게 한다.
+     * @param {{tileX: number, tileY: number}} start
+     * @param {{tileX: number, tileY: number}} end
+     */
+    #removeBuildingsInRect(start, end) {
+        const { buildings } = this.#getBuildingsInRect(start, end);
+        if (buildings.length === 0) {
+            Logger.warn('선택한 영역에 철거할 건물이 없습니다.');
+            return;
+        }
+
+        let totalRefund = 0;
+        for (const building of buildings) {
+            totalRefund += this.#sellBuilding(building);
+        }
+        Logger.info(`건물 ${buildings.length}개 철거됨 (+${totalRefund}원)`);
     }
 
     /**
@@ -273,7 +306,8 @@ export class Game {
 
     /**
      * 드래그로 영역 선택이 끝났을 때 호출된다. 어떤 도구가 선택되어 있었는지에
-     * 따라 블루프린트 캡처 또는 다중 선택(일괄 업그레이드용) 중 하나로 처리한다.
+     * 따라 블루프린트 캡처, 다중 선택(일괄 업그레이드용), 해체(일괄 철거) 중
+     * 하나로 처리한다.
      */
     #handleSelectionEnd() {
         const start = this.selectionDragStart;
@@ -283,6 +317,11 @@ export class Game {
         if (!start || !end) return;
 
         const selectedId = this.buildMenuPanel.getSelectedId();
+
+        if (selectedId === BULLDOZE_TOOL_ID) {
+            this.#removeBuildingsInRect(start, end);
+            return;
+        }
 
         if (selectedId === MULTI_SELECT_TOOL_ID) {
             const buildings = this.#getBuildingsInRect(start, end).buildings;
@@ -308,9 +347,18 @@ export class Game {
         Logger.info(`블루프린트 복사됨 (건물 ${entries.length}개) - 클릭해서 붙여넣기, R로 회전`);
     }
 
-    /** 드래그 없이 클릭만 했을 때(영역 선택 취소) 호출된다. 캡처할 게 없으므로 아무 동작도 하지 않는다. */
+    /**
+     * 드래그 없이 클릭만 했을 때(영역 선택 취소) 호출된다. 해체 도구라면 클릭한
+     * 타일 하나만 철거하고, 그 외 도구(블루프린트/다중 선택)는 캡처할 게 없으므로
+     * 아무 동작도 하지 않는다.
+     */
     #handleSelectionCancel() {
+        const start = this.selectionDragStart;
         this.selectionDragStart = null;
+
+        if (start && this.buildMenuPanel.getSelectedId() === BULLDOZE_TOOL_ID) {
+            this.#removeBuildingAt(start.tileX, start.tileY);
+        }
     }
 
     /**
